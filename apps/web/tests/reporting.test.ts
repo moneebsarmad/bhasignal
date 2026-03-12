@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { ApprovedIncident, Intervention, Notification, Student } from "@syc/domain";
 
-import { buildReportSnapshot } from "../lib/reporting";
+import { buildReportSnapshot, readReportFilters } from "../lib/reporting";
 import { createInMemoryStorage } from "./review-actions.test";
 
 function seedStudents(): Student[] {
@@ -124,7 +124,12 @@ function seedNotifications(): Notification[] {
   ];
 }
 
-test("buildReportSnapshot applies source filtering to incidents and scoped students", async () => {
+test("readReportFilters defaults reports to Sycamore when no source is supplied", () => {
+  const filters = readReportFilters(new URLSearchParams("grade=8&from=2026-03-01&to=2026-03-31"));
+  assert.equal(filters.sourceType, "sycamore_api");
+});
+
+test("buildReportSnapshot defaults to Sycamore and supports explicit PDF exception filtering", async () => {
   const storage = createInMemoryStorage({
     parseRuns: [],
     rawIncidents: [],
@@ -138,16 +143,29 @@ test("buildReportSnapshot applies source filtering to incidents and scoped stude
   const snapshot = await buildReportSnapshot(storage, {
     grade: "8",
     from: "2026-03-01",
+    to: "2026-03-31"
+  });
+
+  assert.equal(snapshot.filters.sourceType, "sycamore_api");
+  assert.deepEqual(snapshot.sourceBreakdown, { sycamore_api: 1 });
+  assert.equal(snapshot.studentRows.length, 1);
+  assert.equal(snapshot.studentRows[0]?.studentId, "stu_2");
+  assert.equal(snapshot.summary.find((metric) => metric.label === "Discipline events")?.value, 1);
+  assert.equal(snapshot.summary.find((metric) => metric.label === "Active interventions")?.value, 1);
+
+  const pdfExceptionSnapshot = await buildReportSnapshot(storage, {
+    grade: "8",
+    from: "2026-03-01",
     to: "2026-03-31",
     sourceType: "manual_pdf"
   });
 
-  assert.equal(snapshot.filters.sourceType, "manual_pdf");
-  assert.deepEqual(snapshot.sourceBreakdown, { manual_pdf: 1 });
-  assert.equal(snapshot.studentRows.length, 1);
-  assert.equal(snapshot.studentRows[0]?.studentId, "stu_1");
-  assert.equal(snapshot.summary.find((metric) => metric.label === "Discipline events")?.value, 1);
-  assert.equal(snapshot.summary.find((metric) => metric.label === "Active interventions")?.value, 1);
+  assert.equal(pdfExceptionSnapshot.filters.sourceType, "manual_pdf");
+  assert.deepEqual(pdfExceptionSnapshot.sourceBreakdown, { manual_pdf: 1 });
+  assert.equal(pdfExceptionSnapshot.studentRows.length, 1);
+  assert.equal(pdfExceptionSnapshot.studentRows[0]?.studentId, "stu_1");
+  assert.equal(pdfExceptionSnapshot.summary.find((metric) => metric.label === "Discipline events")?.value, 1);
+  assert.equal(pdfExceptionSnapshot.summary.find((metric) => metric.label === "Active interventions")?.value, 1);
 
   const singleDaySnapshot = await buildReportSnapshot(storage, {
     grade: "8",

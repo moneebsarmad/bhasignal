@@ -64,12 +64,14 @@ interface DateWindow {
   toEpoch: number;
 }
 
+const DEFAULT_SOURCE_TYPE: IngestionSourceType = "sycamore_api";
+
 function normalizeFilterValue(value: string | undefined): string {
   return value?.trim() || "";
 }
 
-function normalizeSourceType(value: string | undefined): IngestionSourceType | undefined {
-  return value === "manual_pdf" || value === "sycamore_api" ? value : undefined;
+function normalizeSourceType(value: string | undefined): IngestionSourceType {
+  return value === "manual_pdf" ? value : DEFAULT_SOURCE_TYPE;
 }
 
 function parseBoundary(value: string | undefined, boundary: "start" | "end"): number {
@@ -153,7 +155,7 @@ export async function buildReportSnapshot(
     grade: normalizeFilterValue(filters.grade),
     from: normalizeFilterValue(filters.from),
     to: normalizeFilterValue(filters.to),
-    sourceType: filters.sourceType ?? ""
+    sourceType: filters.sourceType ?? DEFAULT_SOURCE_TYPE
   };
   const window = parseWindow(filters);
   const studentById = new Map(students.map((student) => [student.id, student] as const));
@@ -354,7 +356,7 @@ export async function buildReportSnapshot(
     {
       label: "Discipline events",
       value: filteredEvents.length,
-      description: "Unified discipline events inside the active reporting window."
+      description: "Discipline events inside the active reporting window for the selected source slice."
     },
     {
       label: "Total points",
@@ -376,9 +378,9 @@ export async function buildReportSnapshot(
   const topGrade = incidentsByGrade[0];
   const topReason = topReasons[0];
   const narrativeParts = [
-    normalizedFilters.sourceType
-      ? `This view is scoped to ${normalizedFilters.sourceType === "sycamore_api" ? "Sycamore primary-source" : "PDF fallback"} events only.`
-      : "This view uses unified discipline events with Sycamore as the primary source and PDF as fallback.",
+    normalizedFilters.sourceType === "manual_pdf"
+      ? "This view is in PDF exception mode and excludes the Sycamore primary dataset."
+      : "This view is scoped to Sycamore source-of-truth events by default.",
     topGrade
       ? `Grade ${topGrade.grade} carries the heaviest load with ${topGrade.incidentCount} incidents and ${topGrade.totalPoints} points.`
       : "No discipline events fall inside the current reporting window.",

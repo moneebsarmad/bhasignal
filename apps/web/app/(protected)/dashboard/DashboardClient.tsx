@@ -96,6 +96,8 @@ interface StatusSummaryRow {
   count: number;
 }
 
+const DEFAULT_SOURCE_TYPE = "sycamore_api";
+
 function prettifyKey(value: string): string {
   return value
     .replace(/_/g, " ")
@@ -134,7 +136,7 @@ function toRows(record: Record<string, number>): StatusSummaryRow[] {
 }
 
 function sourceLabel(sourceType: string): string {
-  return sourceType === "sycamore_api" ? "Sycamore API" : sourceType === "manual_pdf" ? "Fallback PDF" : "All sources";
+  return sourceType === "manual_pdf" ? "PDF exception mode" : "Sycamore primary";
 }
 
 function syncModeLabel(value: "initial_backfill" | "incremental" | "manual_range" | null): string {
@@ -225,7 +227,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
   const [grade, setGrade] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [sourceType, setSourceType] = useState("");
+  const [sourceType, setSourceType] = useState(DEFAULT_SOURCE_TYPE);
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -325,7 +327,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
       <PageHeader
         eyebrow="Source of Record"
         title="Keep the discipline signal current"
-        description="Monitor Sycamore freshness, threshold pressure, and the student signal that needs action next from one clean operational surface."
+        description="Monitor Sycamore freshness, threshold pressure, and the student signal that needs action next. Main dashboard views stay Sycamore-first unless you deliberately switch to PDF exception mode."
         actions={
           <Button type="button" variant="secondary" onClick={() => void loadMetrics()} disabled={isLoading}>
             <RefreshCcw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
@@ -341,7 +343,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
             <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Scope the signal</h2>
           </div>
           <p className="max-w-xl text-sm leading-7 text-[var(--color-muted)]">
-            Use grade, date, and source filters to focus the incident signal. Ingestion job counts honor source/date filters but do not apply grade filtering.
+            Main dashboard views default to Sycamore source-of-truth events. Switch to PDF exception mode only when investigating fallback imports; ingestion job counts still honor source and date filters but do not apply grade filtering.
           </p>
         </div>
 
@@ -355,11 +357,10 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
           <Field label="To">
             <Input type="date" value={to} onChange={(event) => setTo(event.currentTarget.value)} />
           </Field>
-          <Field label="Source">
+          <Field label="Dataset mode" hint="Sycamore is the default operational view.">
             <Select value={sourceType} onChange={(event) => setSourceType(event.currentTarget.value)}>
-              <option value="">All sources</option>
-              <option value="sycamore_api">Sycamore API</option>
-              <option value="manual_pdf">Fallback PDF</option>
+              <option value="sycamore_api">Sycamore primary</option>
+              <option value="manual_pdf">PDF exception mode</option>
             </Select>
           </Field>
           <div className="flex items-end">
@@ -394,9 +395,17 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
             {data.filters.from ? <StatusBadge tone="neutral">From {data.filters.from}</StatusBadge> : null}
             {data.filters.to ? <StatusBadge tone="neutral">To {data.filters.to}</StatusBadge> : null}
             {data.filters.sourceType ? (
-              <StatusBadge tone="neutral">{sourceLabel(data.filters.sourceType)}</StatusBadge>
+              <StatusBadge tone={data.filters.sourceType === "manual_pdf" ? "warning" : "success"}>
+                {sourceLabel(data.filters.sourceType)}
+              </StatusBadge>
             ) : null}
           </div>
+
+          {data.filters.sourceType === "manual_pdf" ? (
+            <InlineAlert tone="warning" title="PDF exception mode is active.">
+              Main Sycamore source-of-truth events are excluded from this dashboard slice until you switch back.
+            </InlineAlert>
+          ) : null}
 
           <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
             <StatCard
@@ -408,7 +417,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
             <StatCard
               label="Incidents in range"
               value={data.metrics.incidentsInRange}
-              description="Unified discipline events inside the selected reporting frame."
+              description="Discipline events inside the selected Sycamore or exception slice."
               icon={Activity}
             />
             <StatCard

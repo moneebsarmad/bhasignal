@@ -66,6 +66,8 @@ interface ReportSnapshot {
   narrative: string;
 }
 
+const DEFAULT_SOURCE_TYPE = "sycamore_api";
+
 function buildQuery(filters: { grade: string; from: string; to: string; sourceType: string }): string {
   const params = new URLSearchParams();
   if (filters.grade.trim()) {
@@ -88,7 +90,7 @@ function statusRows(record: Record<string, number>) {
 }
 
 function sourceLabel(sourceType: string): string {
-  return sourceType === "sycamore_api" ? "Sycamore API" : sourceType === "manual_pdf" ? "Manual PDF" : "All sources";
+  return sourceType === "manual_pdf" ? "PDF exception mode" : "Sycamore primary";
 }
 
 export function ReportsClient() {
@@ -97,7 +99,7 @@ export function ReportsClient() {
   const [grade, setGrade] = useState(() => searchParams.get("grade") || "");
   const [from, setFrom] = useState(() => searchParams.get("from") || "");
   const [to, setTo] = useState(() => searchParams.get("to") || "");
-  const [sourceType, setSourceType] = useState(() => searchParams.get("sourceType") || "");
+  const [sourceType, setSourceType] = useState(() => searchParams.get("sourceType") || DEFAULT_SOURCE_TYPE);
   const [data, setData] = useState<ReportSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,7 +108,7 @@ export function ReportsClient() {
     setGrade(searchParams.get("grade") || "");
     setFrom(searchParams.get("from") || "");
     setTo(searchParams.get("to") || "");
-    setSourceType(searchParams.get("sourceType") || "");
+    setSourceType(searchParams.get("sourceType") || DEFAULT_SOURCE_TYPE);
   }, [searchParams]);
 
   const currentQuery = useMemo(
@@ -157,7 +159,7 @@ export function ReportsClient() {
       <PageHeader
         eyebrow="Analysis"
         title="Reporting studio for discipline trends and exports"
-        description="Filter the canonical dataset, scan cohort shifts, and export the exact slices staff need for review packets or leadership reporting."
+        description="Filter the Sycamore-backed discipline dataset, scan cohort shifts, and export the exact slices staff need. PDF rows only appear when you explicitly enter exception mode."
         actions={
           <div className="flex flex-wrap gap-3">
             <Link href="/reports/reconciliation" className={buttonStyles({ variant: "secondary" })}>
@@ -200,11 +202,10 @@ export function ReportsClient() {
           <Field label="To">
             <Input type="date" value={to} onChange={(event) => setTo(event.currentTarget.value)} />
           </Field>
-          <Field label="Source">
+          <Field label="Dataset mode" hint="Reporting defaults to Sycamore source-of-truth events.">
             <Select value={sourceType} onChange={(event) => setSourceType(event.currentTarget.value)}>
-              <option value="">All sources</option>
-              <option value="manual_pdf">Manual PDF</option>
-              <option value="sycamore_api">Sycamore API</option>
+              <option value="sycamore_api">Sycamore primary</option>
+              <option value="manual_pdf">PDF exception mode</option>
             </Select>
           </Field>
           <div className="flex items-end">
@@ -223,6 +224,12 @@ export function ReportsClient() {
 
       {data ? (
         <>
+          {data.filters.sourceType === "manual_pdf" ? (
+            <InlineAlert tone="warning" title="PDF exception mode is active.">
+              This report excludes the Sycamore primary dataset until you switch back to the default view.
+            </InlineAlert>
+          ) : null}
+
           <InsightPanel
             eyebrow="Readout"
             title="Current reporting signal"
@@ -234,7 +241,9 @@ export function ReportsClient() {
               {data.filters.from ? <StatusBadge tone="neutral">From {data.filters.from}</StatusBadge> : null}
               {data.filters.to ? <StatusBadge tone="neutral">To {data.filters.to}</StatusBadge> : null}
               {data.filters.sourceType ? (
-                <StatusBadge tone="neutral">{sourceLabel(data.filters.sourceType)}</StatusBadge>
+                <StatusBadge tone={data.filters.sourceType === "manual_pdf" ? "warning" : "success"}>
+                  {sourceLabel(data.filters.sourceType)}
+                </StatusBadge>
               ) : null}
             </div>
           </InsightPanel>
@@ -268,7 +277,7 @@ export function ReportsClient() {
               {Object.entries(data.sourceBreakdown).map(([key, value]) => (
                 <Panel key={key} className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                    Source mix
+                    Active dataset
                   </p>
                   <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{value}</p>
                   <p className="mt-2 text-sm text-[var(--color-muted)]">{sourceLabel(key)} incidents in the current report slice.</p>

@@ -47,12 +47,14 @@ interface DateWindow {
   toEpoch: number;
 }
 
+const DEFAULT_SOURCE_TYPE: IngestionSourceType = "sycamore_api";
+
 function normalizeFilterValue(value: string | undefined): string {
   return value?.trim() || "";
 }
 
-function normalizeSourceType(value: string | undefined): IngestionSourceType | undefined {
-  return value === "manual_pdf" || value === "sycamore_api" ? value : undefined;
+function normalizeSourceType(value: string | undefined): IngestionSourceType {
+  return value === "manual_pdf" ? value : DEFAULT_SOURCE_TYPE;
 }
 
 function parseBoundary(value: string | undefined, boundary: "start" | "end"): number {
@@ -129,7 +131,7 @@ export async function buildDashboardSnapshot(
     grade: normalizeFilterValue(filters.grade),
     from: normalizeFilterValue(filters.from),
     to: normalizeFilterValue(filters.to),
-    sourceType: filters.sourceType ?? ""
+    sourceType: filters.sourceType ?? DEFAULT_SOURCE_TYPE
   };
   const window = parseWindow(filters);
 

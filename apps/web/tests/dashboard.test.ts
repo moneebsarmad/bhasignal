@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { ApprovedIncident, ParseRun, Policy, Student } from "@syc/domain";
 
-import { buildDashboardSnapshot } from "../lib/dashboard";
+import { buildDashboardSnapshot, readDashboardFilters } from "../lib/dashboard";
 import { createInMemoryStorage } from "./review-actions.test";
 
 function seedPolicy(): Policy {
@@ -133,7 +133,12 @@ function seedParseRuns(): ParseRun[] {
   ];
 }
 
-test("buildDashboardSnapshot uses the selected window instead of lifetime points and supports source filtering", async () => {
+test("readDashboardFilters defaults the dashboard to Sycamore when no source is supplied", () => {
+  const filters = readDashboardFilters(new URLSearchParams("grade=8&from=2026-03-01&to=2026-03-31"));
+  assert.equal(filters.sourceType, "sycamore_api");
+});
+
+test("buildDashboardSnapshot defaults to Sycamore and supports explicit PDF exception filtering", async () => {
   const storage = createInMemoryStorage({
     parseRuns: seedParseRuns(),
     rawIncidents: [],
@@ -148,21 +153,23 @@ test("buildDashboardSnapshot uses the selected window instead of lifetime points
     from: "2026-03-01",
     to: "2026-03-31"
   });
-  assert.equal(marchSnapshot.metrics.totalStudents, 2);
+  assert.equal(marchSnapshot.metrics.totalStudents, 1);
   assert.equal(marchSnapshot.metrics.countAtX, 1);
   assert.equal(marchSnapshot.topStudents[0]?.studentId, "stu_2");
+  assert.deepEqual(marchSnapshot.incidentSourceCounts, { sycamore_api: 1 });
+  assert.deepEqual(marchSnapshot.parseRunSourceCounts, { sycamore_api: 1 });
 
-  const sycamoreSnapshot = await buildDashboardSnapshot(storage, {
+  const pdfExceptionSnapshot = await buildDashboardSnapshot(storage, {
     grade: "8",
     from: "2026-03-01",
     to: "2026-03-31",
-    sourceType: "sycamore_api"
+    sourceType: "manual_pdf"
   });
-  assert.equal(sycamoreSnapshot.metrics.totalStudents, 1);
-  assert.equal(sycamoreSnapshot.metrics.countAtX, 1);
-  assert.deepEqual(sycamoreSnapshot.incidentSourceCounts, { sycamore_api: 1 });
-  assert.deepEqual(sycamoreSnapshot.parseRunSourceCounts, { sycamore_api: 1 });
-  assert.equal(sycamoreSnapshot.topStudents[0]?.studentId, "stu_2");
+  assert.equal(pdfExceptionSnapshot.metrics.totalStudents, 1);
+  assert.equal(pdfExceptionSnapshot.metrics.countAtX, 0);
+  assert.deepEqual(pdfExceptionSnapshot.incidentSourceCounts, { manual_pdf: 1 });
+  assert.deepEqual(pdfExceptionSnapshot.parseRunSourceCounts, { manual_pdf: 1 });
+  assert.equal(pdfExceptionSnapshot.topStudents[0]?.studentId, "stu_1");
 
   const singleDaySnapshot = await buildDashboardSnapshot(storage, {
     grade: "8",
