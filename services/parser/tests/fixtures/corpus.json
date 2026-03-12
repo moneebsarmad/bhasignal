@@ -1,0 +1,54 @@
+[
+  {
+    "name": "standard_labeled_rows",
+    "snippets": [
+      "Student: Jane Doe | Date: 02/11/2026 08:15 AM | Points: 3 | Reason: Disrespect | Teacher: Mr. Adams | Comment: Talking back in class",
+      "Student: John Roe | Date: 02/11/2026 10:02 AM | Points: 1 | Reason: Tardy | Teacher: Ms. Lane | Comment: Late to class"
+    ],
+    "expected": [
+      { "student": "Jane Doe", "occurred_at": "2026-02-11T08:15:00", "points": "3" },
+      { "student": "John Roe", "occurred_at": "2026-02-11T10:02:00", "points": "1" }
+    ]
+  },
+  {
+    "name": "dash_date_no_time",
+    "snippets": [
+      "Student Name: Mario Bell | Date: 2026-02-09 | Demerits: 2 | Violation: Defiance | Teacher: Coach Frank | Note: Refused instruction"
+    ],
+    "expected": [
+      { "student": "Mario Bell", "occurred_at": "2026-02-09", "points": "2" }
+    ]
+  },
+  {
+    "name": "mixed_label_terms",
+    "snippets": [
+      "Student: Nia Ford | Date/Time: 02/10/2026 13:31 | Merit: -1 | Infraction: Phone use | Recorded By: Ms. Stone | Details: Phone visible in class"
+    ],
+    "expected": [
+      { "student": "Nia Ford", "occurred_at": "2026-02-10T13:31:00", "points": "-1" }
+    ]
+  },
+  {
+    "name": "multiple_rows_with_page_noise",
+    "snippets": [
+      "Discipline Report",
+      "Page 1",
+      "Student: Claire Park | Date: 02/12/2026 | Points: 4 | Reason: Bullying | Teacher: Mr. Hale | Comment: Name-calling in hallway",
+      "Page 2",
+      "Student: Toby Ng | Date: 02/12/2026 | Points: 2 | Reason: Dress Code | Teacher: Ms. Ames | Comment: Non-uniform shoes"
+    ],
+    "expected": [
+      { "student": "Claire Park", "occurred_at": "2026-02-12", "points": "4" },
+      { "student": "Toby Ng", "occurred_at": "2026-02-12", "points": "2" }
+    ]
+  },
+  {
+    "name": "short_comment_and_titles",
+    "snippets": [
+      "Student: Ethan Cole | Date: 02/13/2026 09:05 AM | Points: 1 | Reason: Disruption | Teacher: Dr. Miller | Comment: Loud"
+    ],
+    "expected": [
+      { "student": "Ethan Cole", "occurred_at": "2026-02-13T09:05:00", "points": "1" }
+    ]
+  }
+]

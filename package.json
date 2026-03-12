@@ -1,0 +1,23 @@
+{
+  "name": "sycamore-disc",
+  "private": true,
+  "version": "0.1.0",
+  "description": "School Discipline Intelligence MVP monorepo",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace @syc/web",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:parser": "python3 -m pytest services/parser/tests",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
+

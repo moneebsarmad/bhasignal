@@ -1,0 +1,17 @@
+{
+  "name": "@syc/config",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "lint": "echo \"No lint config for @syc/config yet\"",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "echo \"No tests for @syc/config yet\""
+  },
+  "devDependencies": {
+    "typescript": "5.7.2"
+  }
+}
+

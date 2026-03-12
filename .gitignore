@@ -1,0 +1,29 @@
+# Node
+node_modules/
+.next/
+dist/
+coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.venv-parser/
+venv/
+*.egg-info/
+
+# Env
+.env
+.env.local
+.env.*.local
+supabase/supabase-vars.txt
+
+# Build artifacts
+*.tsbuildinfo
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+.local/

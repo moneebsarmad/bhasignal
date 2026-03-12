@@ -1,0 +1,20 @@
+{
+  "name": "@syc/domain",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "lint": "echo \"No lint config for @syc/domain yet\"",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "node --import tsx --test tests/**/*.test.ts"
+  },
+  "dependencies": {
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "4.20.5",
+    "typescript": "5.7.2"
+  }
+}

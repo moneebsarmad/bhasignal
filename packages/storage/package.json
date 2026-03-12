@@ -1,0 +1,21 @@
+{
+  "name": "@syc/storage",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "lint": "echo \"No lint config for @syc/storage yet\"",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "node --import tsx --test tests/**/*.test.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "@syc/domain": "0.1.0"
+  },
+  "devDependencies": {
+    "tsx": "4.20.5",
+    "typescript": "5.7.2"
+  }
+}
