@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, BellDot, Flag, RefreshCcw, ShieldCheck, Users } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, BellDot, RefreshCcw, ShieldCheck, Siren, Users } from "lucide-react";
 
 import {
   Button,
@@ -23,34 +23,71 @@ import {
   tableShellClassName
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { DeepAnalytics } from "@/components/deep-analytics";
 
 interface DashboardPayload {
   filters: {
     grade: string;
-    from: string;
-    to: string;
     sourceType: string;
   };
   metrics: {
-    totalStudents: number;
-    incidentsInRange: number;
-    countAtX: number;
-    countAtX10: number;
-    countAtX20: number;
-    countAtX30: number;
-    nearThresholdCount: number;
+    studentsTracked: number;
+    incidentsTracked: number;
+    totalPoints: number;
+    studentsAt10Plus: number;
+    studentsAt35Plus: number;
+    openInterventions: number;
+    queuedNotifications: number;
+    failedNotifications: number;
   };
-  parseRunStatus: Record<string, number>;
-  parseRunSourceCounts: Record<string, number>;
-  incidentSourceCounts: Record<string, number>;
-  interventionCounts: Record<string, number>;
-  notificationCounts: Record<string, number>;
-  topStudents: Array<{
+  bandCounts: Array<{
+    id: string;
+    label: string;
+    shortLabel: string;
+    tone: "neutral" | "info" | "success" | "warning" | "danger";
+    count: number;
+    parentCommunication: string;
+    adminAction: string;
+  }>;
+  actionQueue: Array<{
     studentId: string;
     fullName: string;
     grade: string;
     totalPoints: number;
+    currentBandId: string;
+    currentBandLabel: string;
+    currentBandTone: "neutral" | "info" | "success" | "warning" | "danger";
+    parentCommunication: string;
+    adminAction: string;
+    adminMessage: string;
+    policyImpact: string;
+    latestIncidentAt: string | null;
+    activeInterventions: number;
+    queuedNotifications: number;
+    failedNotifications: number;
   }>;
+  gradePressure: Array<{
+    grade: string;
+    studentCount: number;
+    incidentCount: number;
+    totalPoints: number;
+    escalatedCount: number;
+    criticalCount: number;
+  }>;
+  violationHotspots: Array<{
+    label: string;
+    incidentCount: number;
+    totalPoints: number;
+  }>;
+  recentTrend: Array<{
+    period: string;
+    incidentCount: number;
+    totalPoints: number;
+  }>;
+  interventionCounts: Record<string, number>;
+  notificationCounts: Record<string, number>;
+  parseRunStatus: Record<string, number>;
+  parseRunSourceCounts: Record<string, number>;
   sycamore: {
     configured: boolean;
     error?: string;
@@ -70,31 +107,29 @@ interface DashboardPayload {
       windowStartDate: string | null;
       windowEndDate: string | null;
     } | null;
-    recentLogs: Array<{
-      sycamoreLogId: string;
-      studentId: string;
-      studentRecordId: string | null;
-      studentName: string | null;
-      grade: string | null;
-      incidentDate: string | null;
-      points: number;
-      level: number | null;
-      violation: string | null;
-      violationRaw: string | null;
-      incidentType: string | null;
-      resolution: string | null;
-      consequence: string | null;
-      authorName: string | null;
-      syncedAt: string;
-    }>;
   };
 }
 
-interface StatusSummaryRow {
-  label: string;
-  rawLabel: string;
-  count: number;
+interface SycamoreSyncActionResponse {
+  sycamoreSync?: {
+    syncLogId: string;
+    status: "running" | "success" | "partial" | "failed";
+    syncMode: "initial_backfill" | "incremental" | "manual_range";
+    window: {
+      startDate: string;
+      endDate: string;
+    };
+    recordsDiscovered: number;
+    recordsUpserted: number;
+    warnings: string[];
+    startedAt: string;
+    completedAt: string;
+    triggeredBy: string;
+  };
+  error?: string;
 }
+
+type DashboardTab = "command" | "analytics";
 
 const DEFAULT_SOURCE_TYPE = "sycamore_api";
 
@@ -105,34 +140,19 @@ function prettifyKey(value: string): string {
 }
 
 function badgeToneForKey(key: string): "neutral" | "info" | "success" | "warning" | "danger" {
-  if (key === "success") {
+  if (key === "success" || key === "completed" || key === "sent") {
     return "success";
   }
-  if (key === "partial") {
+  if (key === "partial" || key === "queued" || key === "open" || key === "review_required") {
     return "warning";
   }
-  if (key === "running") {
+  if (key === "running" || key === "in_progress" || key === "processing") {
     return "info";
   }
-  if (key.includes("failed") || key.includes("dead")) {
+  if (key.includes("failed") || key === "overdue") {
     return "danger";
   }
-  if (key.includes("queued") || key.includes("pending")) {
-    return "warning";
-  }
-  if (key.includes("sent") || key.includes("complete") || key.includes("completed") || key.includes("approved")) {
-    return "success";
-  }
-  if (key.includes("in_progress") || key.includes("open")) {
-    return "info";
-  }
   return "neutral";
-}
-
-function toRows(record: Record<string, number>): StatusSummaryRow[] {
-  return Object.entries(record)
-    .map(([rawLabel, count]) => ({ rawLabel, label: prettifyKey(rawLabel), count }))
-    .sort((left, right) => right.count - left.count);
 }
 
 function sourceLabel(sourceType: string): string {
@@ -161,7 +181,7 @@ function sycamoreStatusSummary(sycamore: DashboardPayload["sycamore"]): {
     return {
       label: "Not configured",
       tone: "warning",
-      description: "Connect Sycamore to make SIS sync the primary intake path for dashboard and reporting."
+      description: "Connect Sycamore so the command center can trust the primary source."
     };
   }
 
@@ -169,7 +189,7 @@ function sycamoreStatusSummary(sycamore: DashboardPayload["sycamore"]): {
     return {
       label: "Needs attention",
       tone: "danger",
-      description: "The primary discipline source needs intervention before its freshness can be trusted."
+      description: "The primary discipline source needs admin attention before the dashboard can be trusted."
     };
   }
 
@@ -177,7 +197,7 @@ function sycamoreStatusSummary(sycamore: DashboardPayload["sycamore"]): {
     return {
       label: "Warnings present",
       tone: "warning",
-      description: "The latest primary-source sync completed with warnings that should be reviewed."
+      description: "The latest sync completed with warnings that should be reviewed before acting on the data."
     };
   }
 
@@ -185,7 +205,7 @@ function sycamoreStatusSummary(sycamore: DashboardPayload["sycamore"]): {
     return {
       label: "Sync in progress",
       tone: "info",
-      description: "Sycamore is actively refreshing the mirrored SIS dataset right now."
+      description: "Sycamore is actively refreshing the mirrored discipline dataset."
     };
   }
 
@@ -193,40 +213,30 @@ function sycamoreStatusSummary(sycamore: DashboardPayload["sycamore"]): {
     return {
       label: "Live",
       tone: "success",
-      description: "Primary discipline source for dashboard and reporting."
+      description: "The command center is using the current primary discipline source."
     };
   }
 
   return {
     label: "Ready to sync",
     tone: "info",
-    description: "Sycamore is configured and ready to become the active intake source for the next run."
+    description: "Sycamore is configured and ready for the next manual or scheduled refresh."
   };
 }
 
-interface SycamoreSyncActionResponse {
-  sycamoreSync?: {
-    syncLogId: string;
-    status: "running" | "success" | "partial" | "failed";
-    syncMode: "initial_backfill" | "incremental" | "manual_range";
-    window: {
-      startDate: string;
-      endDate: string;
-    };
-    recordsDiscovered: number;
-    recordsUpserted: number;
-    warnings: string[];
-    startedAt: string;
-    completedAt: string;
-    triggeredBy: string;
-  };
-  error?: string;
+function statusRows(record: Record<string, number>) {
+  return Object.entries(record)
+    .map(([key, count]) => ({
+      key,
+      label: prettifyKey(key),
+      count
+    }))
+    .sort((left, right) => right.count - left.count);
 }
 
 export function DashboardClient({ canManageSycamore }: { canManageSycamore: boolean }) {
+  const [activeTab, setActiveTab] = useState<DashboardTab>("command");
   const [grade, setGrade] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
   const [sourceType, setSourceType] = useState(DEFAULT_SOURCE_TYPE);
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -234,22 +244,18 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
   const [isSyncingSycamore, setIsSyncingSycamore] = useState(false);
   const [sycamoreNotice, setSycamoreNotice] = useState<string | null>(null);
   const [sycamoreError, setSycamoreError] = useState<string | null>(null);
+  const filtersRef = useRef({ grade: "", sourceType: DEFAULT_SOURCE_TYPE });
+  filtersRef.current = { grade, sourceType };
 
-  const loadMetrics = useCallback(async () => {
+  const loadMetrics = useCallback(async (nextFilters = filtersRef.current) => {
     setIsLoading(true);
     setError(null);
     const params = new URLSearchParams();
-    if (grade.trim()) {
-      params.set("grade", grade.trim());
+    if (nextFilters.grade.trim()) {
+      params.set("grade", nextFilters.grade.trim());
     }
-    if (from) {
-      params.set("from", from);
-    }
-    if (to) {
-      params.set("to", to);
-    }
-    if (sourceType) {
-      params.set("sourceType", sourceType);
+    if (nextFilters.sourceType) {
+      params.set("sourceType", nextFilters.sourceType);
     }
 
     const response = await fetch(`/api/dashboard/metrics?${params.toString()}`, { cache: "no-store" });
@@ -260,9 +266,12 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
       return;
     }
 
-    setData(body as DashboardPayload);
+    const snapshot = body as DashboardPayload;
+    setData(snapshot);
+    setGrade(snapshot.filters.grade);
+    setSourceType(snapshot.filters.sourceType || DEFAULT_SOURCE_TYPE);
     setIsLoading(false);
-  }, [from, grade, sourceType, to]);
+  }, []);
 
   useEffect(() => {
     void loadMetrics();
@@ -304,30 +313,24 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
 
   function onApplyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void loadMetrics();
+    void loadMetrics({ grade, sourceType });
   }
 
-  const parseRows = useMemo(() => (data ? toRows(data.parseRunStatus) : []), [data]);
-  const parseSourceRows = useMemo(() => (data ? toRows(data.parseRunSourceCounts) : []), [data]);
-  const incidentSourceRows = useMemo(() => (data ? toRows(data.incidentSourceCounts) : []), [data]);
-  const interventionRows = useMemo(() => (data ? toRows(data.interventionCounts) : []), [data]);
-  const notificationRows = useMemo(() => (data ? toRows(data.notificationCounts) : []), [data]);
   const sycamoreStatus = useMemo(() => (data ? sycamoreStatusSummary(data.sycamore) : null), [data]);
-  const maxPipelineCount = Math.max(
-    ...parseRows.map((row) => row.count),
-    ...parseSourceRows.map((row) => row.count),
-    ...incidentSourceRows.map((row) => row.count),
-    ...interventionRows.map((row) => row.count),
-    ...notificationRows.map((row) => row.count),
-    1
+  const interventionRows = useMemo(() => statusRows(data?.interventionCounts ?? {}), [data]);
+  const notificationRows = useMemo(() => statusRows(data?.notificationCounts ?? {}), [data]);
+  const parseRows = useMemo(() => statusRows(data?.parseRunStatus ?? {}), [data]);
+  const trendMax = useMemo(
+    () => Math.max(...(data?.recentTrend.map((row) => row.incidentCount) ?? [1]), 1),
+    [data]
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Source of Record"
-        title="Keep the discipline signal current"
-        description="Monitor Sycamore freshness, threshold pressure, and the student signal that needs action next. Main dashboard views stay Sycamore-first unless you deliberately switch to PDF exception mode."
+        eyebrow="Admin decision center"
+        title="Discipline command center"
+        description="Use current cumulative demerit totals to see which students need parent communication now, what the admin action is at each threshold, and which discipline patterns are changing across the school."
         actions={
           <Button type="button" variant="secondary" onClick={() => void loadMetrics()} disabled={isLoading}>
             <RefreshCcw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
@@ -336,107 +339,415 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
         }
       />
 
-      <Panel className="space-y-5">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Filter frame</p>
-            <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Scope the signal</h2>
-          </div>
-          <p className="max-w-xl text-sm leading-7 text-[var(--color-muted)]">
-            Main dashboard views default to Sycamore source-of-truth events. Switch to PDF exception mode only when investigating fallback imports; ingestion job counts still honor source and date filters but do not apply grade filtering.
-          </p>
-        </div>
+      <div className="flex flex-wrap gap-2 rounded-[1.4rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-2">
+        {[
+          { key: "command" as const, label: "Command Center" },
+          { key: "analytics" as const, label: "Deep Analytics" }
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            className={cn(
+              "rounded-full px-4 py-2 text-sm font-semibold transition",
+              activeTab === tab.key
+                ? "bg-[var(--color-primary)] text-white shadow-card"
+                : "text-[var(--color-muted)] hover:bg-white hover:text-[var(--color-ink)]"
+            )}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-        <form onSubmit={onApplyFilters} className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto]">
-          <Field label="Grade" hint="Leave blank for all grades.">
-            <Input value={grade} onChange={(event) => setGrade(event.currentTarget.value)} placeholder="e.g. 8" />
-          </Field>
-          <Field label="From">
-            <Input type="date" value={from} onChange={(event) => setFrom(event.currentTarget.value)} />
-          </Field>
-          <Field label="To">
-            <Input type="date" value={to} onChange={(event) => setTo(event.currentTarget.value)} />
-          </Field>
-          <Field label="Dataset mode" hint="Sycamore is the default operational view.">
-            <Select value={sourceType} onChange={(event) => setSourceType(event.currentTarget.value)}>
-              <option value="sycamore_api">Sycamore primary</option>
-              <option value="manual_pdf">PDF exception mode</option>
-            </Select>
-          </Field>
-          <div className="flex items-end">
-            <Button type="submit" variant="primary" className="w-full xl:w-auto" disabled={isLoading}>
-              {isLoading ? "Applying..." : "Apply filters"}
-            </Button>
-          </div>
-        </form>
-      </Panel>
+      {activeTab === "analytics" ? <DeepAnalytics embedded /> : null}
 
-      {error ? (
-        <InlineAlert tone="danger" title="Dashboard metrics could not be loaded.">
-          {error}
-        </InlineAlert>
-      ) : null}
-
-      {!data && isLoading ? (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <div
-              key={index}
-              className="h-48 animate-pulse rounded-[1.75rem] border border-white/80 bg-white/80 shadow-card"
-            />
-          ))}
-        </div>
-      ) : null}
-
-      {data ? (
+      {activeTab === "command" ? (
         <>
-          <div className="flex flex-wrap gap-3">
-            {data.filters.grade ? <StatusBadge tone="neutral">Grade {data.filters.grade}</StatusBadge> : null}
-            {data.filters.from ? <StatusBadge tone="neutral">From {data.filters.from}</StatusBadge> : null}
-            {data.filters.to ? <StatusBadge tone="neutral">To {data.filters.to}</StatusBadge> : null}
-            {data.filters.sourceType ? (
-              <StatusBadge tone={data.filters.sourceType === "manual_pdf" ? "warning" : "success"}>
-                {sourceLabel(data.filters.sourceType)}
-              </StatusBadge>
-            ) : null}
-          </div>
+          <Panel className="space-y-5">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+                  Live posture filters
+                </p>
+                <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Scope the command center</h2>
+              </div>
+              <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
+                This view uses stored cumulative demerit totals for the selected source mode. It is intentionally
+                operational, not date-windowed, so the parent communication ladder stays accurate.
+              </p>
+            </div>
 
-          {data.filters.sourceType === "manual_pdf" ? (
-            <InlineAlert tone="warning" title="PDF exception mode is active.">
-              Main Sycamore source-of-truth events are excluded from this dashboard slice until you switch back.
+            <form onSubmit={onApplyFilters} className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_auto]">
+              <Field label="Grade" hint="Leave blank for all grades.">
+                <Input value={grade} onChange={(event) => setGrade(event.currentTarget.value)} placeholder="e.g. 8" />
+              </Field>
+              <Field label="Dataset mode">
+                <Select value={sourceType} onChange={(event) => setSourceType(event.currentTarget.value)}>
+                  <option value="sycamore_api">Sycamore primary</option>
+                  <option value="manual_pdf">PDF exception mode</option>
+                </Select>
+              </Field>
+              <div className="flex items-end">
+                <Button type="submit" variant="primary" className="w-full xl:w-auto" disabled={isLoading}>
+                  {isLoading ? "Applying..." : "Apply filters"}
+                </Button>
+              </div>
+            </form>
+          </Panel>
+
+          {error ? (
+            <InlineAlert tone="danger" title="Dashboard metrics could not be loaded.">
+              {error}
             </InlineAlert>
           ) : null}
 
-          <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-            <StatCard
-              label="Students in scope"
-              value={data.metrics.totalStudents}
-              description="Students represented in the selected grade, date, and source slice."
-              icon={Users}
-            />
-            <StatCard
-              label="Incidents in range"
-              value={data.metrics.incidentsInRange}
-              description="Discipline events inside the selected Sycamore or exception slice."
-              icon={Activity}
-            />
-            <StatCard
-              label="Near threshold"
-              value={data.metrics.nearThresholdCount}
-              description="Students approaching the next policy checkpoint."
-              icon={Flag}
-            />
-            <StatCard
-              label="At base threshold"
-              value={data.metrics.countAtX}
-              description="Students sitting exactly on the current base milestone."
-              icon={ShieldCheck}
-            />
-          </section>
+          {data?.filters.sourceType === "manual_pdf" ? (
+            <InlineAlert tone="warning" title="PDF exception mode is active.">
+              This command center is showing fallback import data instead of the Sycamore primary dataset.
+            </InlineAlert>
+          ) : null}
 
-          <section className="space-y-5">
-            <Panel className="overflow-hidden border-white/80 bg-[linear-gradient(135deg,rgba(17,94,89,0.10),rgba(255,255,255,0.98)_44%,rgba(173,124,44,0.08))]">
-              <div className="space-y-6">
+          {data ? (
+            <>
+              <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+                <StatCard
+                  label="Students tracked"
+                  value={data.metrics.studentsTracked}
+                  description="Students with stored discipline points in this operational slice."
+                  icon={Users}
+                />
+                <StatCard
+                  label="Incidents tracked"
+                  value={data.metrics.incidentsTracked}
+                  description="Stored discipline events contributing to current cumulative totals."
+                  icon={Siren}
+                />
+                <StatCard
+                  label="Total points"
+                  value={data.metrics.totalPoints}
+                  description="Cumulative demerit points across students in this live slice."
+                  icon={AlertTriangle}
+                />
+                <StatCard
+                  label="Students at 10+"
+                  value={data.metrics.studentsAt10Plus}
+                  description="Students currently on the parent communication ladder."
+                  icon={BellDot}
+                />
+                <StatCard
+                  label="Students at 35+"
+                  value={data.metrics.studentsAt35Plus}
+                  description="Students in the highest-risk handbook bands."
+                  icon={ShieldCheck}
+                />
+              </section>
+
+              <section className="grid gap-5 md:grid-cols-3">
+                <SoftPanel className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
+                    Open interventions
+                  </p>
+                  <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.openInterventions}</p>
+                  <p className="text-sm leading-7 text-[var(--color-muted)]">
+                    Current interventions still requiring staff follow-through.
+                  </p>
+                </SoftPanel>
+                <SoftPanel className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
+                    Queued notifications
+                  </p>
+                  <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.queuedNotifications}</p>
+                  <p className="text-sm leading-7 text-[var(--color-muted)]">
+                    Notifications waiting for dispatch or manual handling.
+                  </p>
+                </SoftPanel>
+                <SoftPanel className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
+                    Failed notifications
+                  </p>
+                  <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.failedNotifications}</p>
+                  <p className="text-sm leading-7 text-[var(--color-muted)]">
+                    Message failures the admin should review before relying on parent contact counts.
+                  </p>
+                </SoftPanel>
+              </section>
+
+              <section className="space-y-5">
+                <Panel className="space-y-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+                        Handbook ladder
+                      </p>
+                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">
+                        Demerit thresholds that trigger parent communication
+                      </h2>
+                    </div>
+                    <StatusBadge tone="warning">{data.metrics.studentsAt10Plus} students currently escalated</StatusBadge>
+                  </div>
+
+                  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
+                    {data.bandCounts.map((band) => (
+                      <SoftPanel key={band.id} className="space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                              {band.shortLabel}
+                            </p>
+                            <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{band.count}</p>
+                          </div>
+                          <StatusBadge tone={band.tone}>{band.label}</StatusBadge>
+                        </div>
+                        <p className="text-sm font-semibold text-[var(--color-ink)]">{band.parentCommunication}</p>
+                        <p className="text-sm leading-7 text-[var(--color-muted)]">{band.adminAction}</p>
+                      </SoftPanel>
+                    ))}
+                  </div>
+                </Panel>
+
+                <Panel className="space-y-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+                        Needs action now
+                      </p>
+                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Admin action queue</h2>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <Link href="/students" className={buttonStyles({ variant: "secondary" })}>
+                        Open students
+                      </Link>
+                      <Link href="/notifications" className={buttonStyles({ variant: "ghost" })}>
+                        Manage notifications
+                      </Link>
+                    </div>
+                  </div>
+
+                  {data.actionQueue.length === 0 ? (
+                    <EmptyState
+                      title="No students above the communication ladder"
+                      description="This filtered operational slice currently has no students at 10 or more stored points."
+                    />
+                  ) : (
+                    <div className={tableShellClassName}>
+                      <div className="overflow-x-auto">
+                        <table className={tableClassName}>
+                          <thead>
+                            <tr>
+                              <th className={tableHeadCellClassName}>Student</th>
+                              <th className={tableHeadCellClassName}>Current band</th>
+                              <th className={tableHeadCellClassName}>Parent communication</th>
+                              <th className={tableHeadCellClassName}>Admin action</th>
+                              <th className={tableHeadCellClassName}>Follow-through</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--color-line)]">
+                            {data.actionQueue.map((row) => (
+                              <tr key={row.studentId}>
+                                <td className={tableCellClassName}>
+                                  <div className="space-y-1">
+                                    <p className="font-semibold text-[var(--color-ink)]">{row.fullName}</p>
+                                    <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">
+                                      Grade {row.grade} • {row.totalPoints} pts
+                                    </p>
+                                    <p className="text-sm text-[var(--color-muted)]">
+                                      {row.latestIncidentAt
+                                        ? `Latest incident ${new Date(row.latestIncidentAt).toLocaleDateString()}`
+                                        : "No recent incident date"}
+                                    </p>
+                                  </div>
+                                </td>
+                                <td className={tableCellClassName}>
+                                  <div className="space-y-2">
+                                    <StatusBadge tone={row.currentBandTone}>{row.currentBandLabel}</StatusBadge>
+                                    <p className="text-sm leading-7 text-[var(--color-muted)]">{row.policyImpact}</p>
+                                  </div>
+                                </td>
+                                <td className={tableCellClassName}>
+                                  <p className="text-sm leading-7 text-[var(--color-ink)]">{row.parentCommunication}</p>
+                                </td>
+                                <td className={tableCellClassName}>
+                                  <div className="space-y-2">
+                                    <p className="text-sm font-semibold text-[var(--color-ink)]">{row.adminAction}</p>
+                                    <p className="text-sm leading-7 text-[var(--color-muted)]">{row.adminMessage}</p>
+                                  </div>
+                                </td>
+                                <td className={tableCellClassName}>
+                                  <div className="space-y-1 text-sm text-[var(--color-muted)]">
+                                    <p>{row.activeInterventions} active interventions</p>
+                                    <p>{row.queuedNotifications} queued notifications</p>
+                                    <p>{row.failedNotifications} failed notifications</p>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </Panel>
+              </section>
+
+              <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
+                <Panel className="space-y-5">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+                        Grade pressure
+                      </p>
+                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Where the burden is highest</h2>
+                    </div>
+                    <StatusBadge tone="info">{data.gradePressure.length} grades</StatusBadge>
+                  </div>
+
+                  {data.gradePressure.length === 0 ? (
+                    <EmptyState
+                      title="No grade pressure yet"
+                      description="No stored discipline totals were returned for the selected operational slice."
+                    />
+                  ) : (
+                    <div className={tableShellClassName}>
+                      <div className="overflow-x-auto">
+                        <table className={tableClassName}>
+                          <thead>
+                            <tr>
+                              <th className={tableHeadCellClassName}>Grade</th>
+                              <th className={tableHeadCellClassName}>Students</th>
+                              <th className={tableHeadCellClassName}>Incidents</th>
+                              <th className={tableHeadCellClassName}>Points</th>
+                              <th className={tableHeadCellClassName}>10+ students</th>
+                              <th className={tableHeadCellClassName}>35+ students</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--color-line)]">
+                            {data.gradePressure.map((row) => (
+                              <tr key={row.grade}>
+                                <td className={tableCellClassName}>Grade {row.grade}</td>
+                                <td className={tableCellClassName}>{row.studentCount}</td>
+                                <td className={tableCellClassName}>{row.incidentCount}</td>
+                                <td className={tableCellClassName}>{row.totalPoints}</td>
+                                <td className={tableCellClassName}>{row.escalatedCount}</td>
+                                <td className={tableCellClassName}>{row.criticalCount}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </Panel>
+
+                <Panel className="space-y-5">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+                        Behavior hotspots
+                      </p>
+                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Most common stored violations</h2>
+                    </div>
+                    <StatusBadge tone="info">{data.violationHotspots.length} rows</StatusBadge>
+                  </div>
+
+                  {data.violationHotspots.length === 0 ? (
+                    <EmptyState
+                      title="No violation hotspots"
+                      description="Stored violations will appear once the selected source mode contains incident history."
+                    />
+                  ) : (
+                    <div className="space-y-3">
+                      {data.violationHotspots.map((row) => (
+                        <SoftPanel key={row.label} className="space-y-2">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-[var(--color-ink)]">{row.label}</p>
+                              <p className="text-sm text-[var(--color-muted)]">{row.incidentCount} incidents</p>
+                            </div>
+                            <StatusBadge tone="warning">{row.totalPoints} pts</StatusBadge>
+                          </div>
+                        </SoftPanel>
+                      ))}
+                    </div>
+                  )}
+                </Panel>
+              </section>
+
+              <section className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+                <Panel className="space-y-5">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+                        Recent momentum
+                      </p>
+                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Stored incident trend</h2>
+                    </div>
+                    <StatusBadge tone="info">{data.recentTrend.length} weeks</StatusBadge>
+                  </div>
+
+                  {data.recentTrend.length === 0 ? (
+                    <EmptyState
+                      title="No trend data"
+                      description="Stored incidents are needed before the weekly trend can be graphed."
+                    />
+                  ) : (
+                    <div className="space-y-3">
+                      {data.recentTrend.map((row) => (
+                        <div key={row.period} className="space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-[var(--color-ink)]">{row.period}</p>
+                            <p className="text-sm text-[var(--color-muted)]">
+                              {row.incidentCount} incidents • {row.totalPoints} pts
+                            </p>
+                          </div>
+                          <div className="h-2 rounded-full bg-[var(--color-soft-surface)]">
+                            <div
+                              className="h-2 rounded-full bg-[linear-gradient(90deg,var(--color-primary),rgba(17,94,89,0.45))]"
+                              style={{
+                                width: `${Math.max((row.incidentCount / trendMax) * 100, row.incidentCount > 0 ? 8 : 0)}%`
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Panel>
+
+                <Panel className="space-y-6">
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+                        Workflow pulse
+                      </p>
+                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Operational posture</h2>
+                    </div>
+                    <StatusBadge tone="info">Live counts</StatusBadge>
+                  </div>
+
+                  {[
+                    { title: "Parse runs", rows: parseRows },
+                    { title: "Interventions", rows: interventionRows },
+                    { title: "Notifications", rows: notificationRows }
+                  ].map((group) => (
+                    <div key={group.title} className="space-y-3">
+                      <p className="font-semibold text-[var(--color-ink)]">{group.title}</p>
+                      {group.rows.length === 0 ? (
+                        <p className="text-sm text-[var(--color-muted)]">No current counts available.</p>
+                      ) : (
+                        group.rows.map((row) => (
+                          <div key={`${group.title}-${row.key}`} className="flex items-center justify-between gap-3">
+                            <StatusBadge tone={badgeToneForKey(row.key)}>{row.label}</StatusBadge>
+                            <span className="text-sm font-semibold text-[var(--color-ink)]">{row.count}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ))}
+                </Panel>
+              </section>
+
+              <Panel className="space-y-5 overflow-hidden border-white/80 bg-[linear-gradient(135deg,rgba(17,94,89,0.10),rgba(255,255,255,0.98)_44%,rgba(173,124,44,0.08))]">
                 <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
                   <div className="max-w-3xl space-y-4">
                     <div className="flex flex-wrap items-center gap-3">
@@ -444,23 +755,17 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                       <StatusBadge tone={data.sycamore.configured ? "success" : "warning"}>
                         {data.sycamore.configured ? "Primary source configured" : "Configuration required"}
                       </StatusBadge>
-                      {data.sycamore.lastSync?.windowStartDate && data.sycamore.lastSync?.windowEndDate ? (
-                        <StatusBadge tone="neutral">
-                          {data.sycamore.lastSync.windowStartDate} to {data.sycamore.lastSync.windowEndDate}
-                        </StatusBadge>
-                      ) : null}
                     </div>
 
                     <div className="space-y-3">
                       <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
-                        Primary source
+                        Source freshness
                       </p>
                       <h2 className="font-display text-3xl text-[var(--color-ink)] sm:text-[2.6rem]">
-                        Sycamore is driving live discipline intake
+                        Trust the data before acting on it
                       </h2>
                       <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
-                        {sycamoreStatus?.description} Normal daily intake should start here; PDF upload remains available
-                        only for backfill and exception handling.
+                        {sycamoreStatus?.description}
                       </p>
                     </div>
 
@@ -478,9 +783,6 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                       ) : null}
                       <Link href="/reports/reconciliation" className={buttonStyles({ variant: "secondary" })}>
                         Open reconciliation
-                      </Link>
-                      <Link href="/ingestion" className={buttonStyles({ variant: "ghost" })}>
-                        Manage fallback imports
                       </Link>
                     </div>
 
@@ -510,7 +812,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                       </p>
                       <p className="font-display text-4xl text-[var(--color-ink)]">{data.sycamore.totalLogs}</p>
                       <p className="text-sm leading-7 text-[var(--color-muted)]">
-                        Read-only Sycamore discipline rows stored for dashboard and reporting.
+                        Read-only Sycamore rows currently stored for command-center decision making.
                       </p>
                     </SoftPanel>
                     <SoftPanel className="space-y-3 border-white/70 bg-white/80">
@@ -528,7 +830,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                     </SoftPanel>
                     <SoftPanel className="space-y-3 border-white/70 bg-white/80">
                       <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
-                        Student links
+                        Linked rows
                       </p>
                       <p className="font-display text-4xl text-[var(--color-ink)]">{data.sycamore.linkedLogs}</p>
                       <p className="text-sm leading-7 text-[var(--color-muted)]">
@@ -537,238 +839,18 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                     </SoftPanel>
                   </div>
                 </div>
-
-                {data.sycamore.lastSync ? (
-                  <Panel className="border-white/70 bg-[rgba(255,255,255,0.72)] p-4 shadow-none">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="space-y-2">
-                        <p className="font-semibold text-[var(--color-ink)]">Latest sync window</p>
-                        <p className="text-sm text-[var(--color-muted)]">
-                          {data.sycamore.lastSync.windowStartDate && data.sycamore.lastSync.windowEndDate
-                            ? `${data.sycamore.lastSync.windowStartDate} to ${data.sycamore.lastSync.windowEndDate}`
-                            : "Window unavailable"}
-                        </p>
-                        <p className="text-sm text-[var(--color-muted)]">
-                          {data.sycamore.lastSync.completedAt
-                            ? `Completed ${new Date(data.sycamore.lastSync.completedAt).toLocaleString()}`
-                            : `Started ${new Date(data.sycamore.lastSync.startedAt).toLocaleString()}`}
-                        </p>
-                        <p className="text-sm text-[var(--color-muted)]">
-                          Discovered {data.sycamore.lastSync.recordsDiscovered} rows and upserted{" "}
-                          {data.sycamore.lastSync.recordsUpserted}. PDF imports remain a fallback path.
-                        </p>
-                      </div>
-                      <StatusBadge tone={badgeToneForKey(data.sycamore.lastSync.status)}>
-                        {data.sycamore.lastSync.status}
-                      </StatusBadge>
-                    </div>
-                  </Panel>
-                ) : null}
-              </div>
-            </Panel>
-
-            <Panel className="space-y-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
-                    Primary-source records
-                  </p>
-                  <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Latest Sycamore records</h2>
-                  <p className="mt-2 max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
-                    Recent mirrored rows from the SIS feed that now power the cleanest view of discipline activity.
-                  </p>
-                </div>
-                <StatusBadge tone="info">{data.sycamore.recentLogs.length} visible</StatusBadge>
-              </div>
-
-              {data.sycamore.recentLogs.length === 0 ? (
-                <EmptyState
-                  title="No Sycamore records yet"
-                  description="Run the primary Sycamore sync to populate the mirrored SIS dataset."
+              </Panel>
+            </>
+          ) : isLoading ? (
+            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-48 animate-pulse rounded-[1.75rem] border border-white/80 bg-white/80 shadow-card"
                 />
-              ) : (
-                <div className={tableShellClassName}>
-                  <div className="overflow-x-auto">
-                    <table className={tableClassName}>
-                      <thead>
-                        <tr>
-                          <th className={tableHeadCellClassName}>Incident date</th>
-                          <th className={tableHeadCellClassName}>Student</th>
-                          <th className={tableHeadCellClassName}>Level</th>
-                          <th className={tableHeadCellClassName}>Violation</th>
-                          <th className={tableHeadCellClassName}>Logged by</th>
-                          <th className={tableHeadCellClassName}>Resolution</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--color-line)]">
-                        {data.sycamore.recentLogs.map((row) => (
-                          <tr key={row.sycamoreLogId}>
-                            <td className={tableCellClassName}>
-                              <div className="space-y-1">
-                                <p className="font-semibold text-[var(--color-ink)]">{row.incidentDate ?? "Unknown date"}</p>
-                                <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">
-                                  Synced {new Date(row.syncedAt).toLocaleString()}
-                                </p>
-                              </div>
-                            </td>
-                            <td className={tableCellClassName}>
-                              <div className="space-y-1">
-                                <p className="font-semibold text-[var(--color-ink)]">{row.studentName ?? row.studentId}</p>
-                                <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">
-                                  {row.grade ? `Grade ${row.grade}` : row.studentId}
-                                </p>
-                              </div>
-                            </td>
-                            <td className={tableCellClassName}>{row.level !== null ? `Level ${row.level}` : "Unleveled"}</td>
-                            <td className={tableCellClassName}>{row.violation ?? row.incidentType ?? "Unknown"}</td>
-                            <td className={tableCellClassName}>{row.authorName ?? "Not provided"}</td>
-                            <td className={tableCellClassName}>{row.resolution ?? row.consequence ?? "Not provided"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </Panel>
-          </section>
-
-          {incidentSourceRows.length > 0 ? (
-            <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {incidentSourceRows.map((row) => (
-                <SoftPanel key={row.rawLabel} className="space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Incident source</p>
-                  <p className="font-display text-3xl text-[var(--color-ink)]">{row.count}</p>
-                  <p className="text-sm leading-7 text-[var(--color-muted)]">
-                    {sourceLabel(row.rawLabel)} incidents inside the current frame.
-                  </p>
-                </SoftPanel>
               ))}
-            </section>
+            </div>
           ) : null}
-
-          <section className="grid gap-5 md:grid-cols-3">
-            <SoftPanel className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Escalation</p>
-              <p className="font-display text-3xl text-[var(--color-ink)]">{data.metrics.countAtX10}</p>
-              <p className="text-sm leading-7 text-[var(--color-muted)]">Students who have moved to the X+10 milestone.</p>
-            </SoftPanel>
-            <SoftPanel className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">High concern</p>
-              <p className="font-display text-3xl text-[var(--color-ink)]">{data.metrics.countAtX20}</p>
-              <p className="text-sm leading-7 text-[var(--color-muted)]">Students at X+20 who likely need close intervention follow-up.</p>
-            </SoftPanel>
-            <SoftPanel className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Critical concentration</p>
-              <p className="font-display text-3xl text-[var(--color-ink)]">{data.metrics.countAtX30}</p>
-              <p className="text-sm leading-7 text-[var(--color-muted)]">Students already beyond X+30 in the current selected frame.</p>
-            </SoftPanel>
-          </section>
-
-          <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-            <Panel className="space-y-5">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Action list</p>
-                  <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Students requiring the most attention</h2>
-                </div>
-                <StatusBadge tone="warning">{data.topStudents.length} students surfaced</StatusBadge>
-              </div>
-
-              {data.topStudents.length === 0 ? (
-                <EmptyState
-                  title="No students in scope"
-                  description="The current filters did not return any students with surfaced point totals."
-                />
-              ) : (
-                <div className={tableShellClassName}>
-                  <div className="overflow-x-auto">
-                    <table className={tableClassName}>
-                      <thead>
-                        <tr>
-                          <th className={tableHeadCellClassName}>Student</th>
-                          <th className={tableHeadCellClassName}>Grade</th>
-                          <th className={tableHeadCellClassName}>Total points</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--color-line)]">
-                        {data.topStudents.map((row) => (
-                          <tr key={row.studentId}>
-                            <td className={tableCellClassName}>
-                              <div className="space-y-1">
-                                <p className="font-semibold text-[var(--color-ink)]">{row.fullName}</p>
-                                <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">
-                                  {row.studentId}
-                                </p>
-                              </div>
-                            </td>
-                            <td className={tableCellClassName}>{row.grade}</td>
-                            <td className={tableCellClassName}>
-                              <span className="font-semibold text-[var(--color-ink)]">{row.totalPoints}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </Panel>
-
-            <Panel className="space-y-6">
-              <div className="flex items-end justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Pipeline</p>
-                  <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Operational posture</h2>
-                </div>
-                <StatusBadge tone="info">Live counts</StatusBadge>
-              </div>
-
-              {[
-                { title: "Parse runs", rows: parseRows, icon: Activity },
-                { title: "Job sources", rows: parseSourceRows, icon: Activity },
-                { title: "Interventions", rows: interventionRows, icon: ShieldCheck },
-                { title: "Notifications", rows: notificationRows, icon: BellDot }
-              ].map((group) => {
-                const Icon = group.icon;
-                return (
-                  <div key={group.title} className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="rounded-2xl bg-[var(--color-primary-soft)] p-2 text-[var(--color-primary)]">
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <p className="font-semibold text-[var(--color-ink)]">{group.title}</p>
-                        <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">
-                          Status distribution
-                        </p>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      {group.rows.length === 0 ? (
-                        <p className="text-sm text-[var(--color-muted)]">No counts available yet.</p>
-                      ) : (
-                        group.rows.map((row) => (
-                          <div key={`${group.title}-${row.label}`} className="space-y-2">
-                            <div className="flex items-center justify-between gap-3">
-                              <StatusBadge tone={badgeToneForKey(row.rawLabel)}>{row.label}</StatusBadge>
-                              <span className="text-sm font-semibold text-[var(--color-ink)]">{row.count}</span>
-                            </div>
-                            <div className="h-2 rounded-full bg-[var(--color-soft-surface)]">
-                              <div
-                                className="h-2 rounded-full bg-[linear-gradient(90deg,var(--color-primary),rgba(17,94,89,0.45))]"
-                                style={{ width: `${Math.max((row.count / maxPipelineCount) * 100, row.count > 0 ? 8 : 0)}%` }}
-                              />
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </Panel>
-          </section>
         </>
       ) : null}
     </div>

@@ -84,8 +84,8 @@ const allNavItems: NavItem[] = [
   },
   {
     href: "/reports",
-    label: "Reports",
-    description: "Filter rollups, cohort summaries, and export-ready views.",
+    label: "Analytics",
+    description: "Explore deep discipline trends, filters, and stored-data patterns.",
     icon: BarChart3,
     roles: ["admin", "reviewer"]
   },
@@ -168,8 +168,8 @@ export const pageMetaByPath: Record<string, PageMeta> = {
     description: "Follow ingestion, review, policy, and notification activity at a row-by-row level."
   },
   "/reports": {
-    title: "Reporting Studio",
-    description: "Turn operational activity into filtered rollups, cohort views, and exportable reporting packs."
+    title: "Deep Analytics",
+    description: "Explore stored discipline patterns, escalation pressure, and filtered trends that support school decisions."
   },
   "/data-ops": {
     title: "Data Operations",

@@ -1,50 +1,92 @@
-import type { IngestionSourceType, Policy, Student } from "@syc/domain";
+import type { IngestionSourceType } from "@syc/domain";
 import type { StorageRepositories } from "@syc/storage";
 
-import { listDisciplineEvents, type DisciplineEventRecord } from "@/lib/discipline-events";
-import { buildTriggerLevels, parseRunStatusSummary } from "@/lib/policies";
+import { type DisciplineEventRecord, listDisciplineEvents } from "@/lib/discipline-events";
+import {
+  demeritEscalationBands,
+  getDemeritEscalationBand,
+  type DemeritEscalationBandId
+} from "@/lib/demerit-escalation";
+import { parseRunStatusSummary } from "@/lib/policies";
 
 export interface DashboardFilters {
   grade?: string;
-  from?: string;
-  to?: string;
   sourceType?: IngestionSourceType;
 }
 
 export interface DashboardSnapshot {
   filters: {
     grade: string;
-    from: string;
-    to: string;
     sourceType: string;
   };
-  latestPolicy: Policy | null;
   metrics: {
-    totalStudents: number;
-    incidentsInRange: number;
-    countAtX: number;
-    countAtX10: number;
-    countAtX20: number;
-    countAtX30: number;
-    nearThresholdCount: number;
+    studentsTracked: number;
+    incidentsTracked: number;
+    totalPoints: number;
+    studentsAt10Plus: number;
+    studentsAt35Plus: number;
+    openInterventions: number;
+    queuedNotifications: number;
+    failedNotifications: number;
   };
-  countsByLabel: Record<string, number>;
-  interventionCounts: Record<string, number>;
-  notificationCounts: Record<string, number>;
-  parseRunStatus: Record<string, number>;
-  parseRunSourceCounts: Record<string, number>;
-  incidentSourceCounts: Record<string, number>;
-  topStudents: Array<{
+  bandCounts: Array<{
+    id: DemeritEscalationBandId;
+    label: string;
+    shortLabel: string;
+    tone: "neutral" | "info" | "success" | "warning" | "danger";
+    count: number;
+    parentCommunication: string;
+    adminAction: string;
+  }>;
+  actionQueue: Array<{
     studentId: string;
     fullName: string;
     grade: string;
     totalPoints: number;
+    currentBandId: DemeritEscalationBandId;
+    currentBandLabel: string;
+    currentBandTone: "neutral" | "info" | "success" | "warning" | "danger";
+    parentCommunication: string;
+    adminAction: string;
+    adminMessage: string;
+    policyImpact: string;
+    latestIncidentAt: string | null;
+    activeInterventions: number;
+    queuedNotifications: number;
+    failedNotifications: number;
   }>;
+  gradePressure: Array<{
+    grade: string;
+    studentCount: number;
+    incidentCount: number;
+    totalPoints: number;
+    escalatedCount: number;
+    criticalCount: number;
+  }>;
+  violationHotspots: Array<{
+    label: string;
+    incidentCount: number;
+    totalPoints: number;
+  }>;
+  recentTrend: Array<{
+    period: string;
+    incidentCount: number;
+    totalPoints: number;
+  }>;
+  interventionCounts: Record<string, number>;
+  notificationCounts: Record<string, number>;
+  parseRunStatus: Record<string, number>;
+  parseRunSourceCounts: Record<string, number>;
 }
 
-interface DateWindow {
-  fromEpoch: number;
-  toEpoch: number;
+interface StudentAggregate {
+  studentId: string;
+  localStudentId: string | null;
+  fullName: string;
+  grade: string;
+  incidentCount: number;
+  totalPoints: number;
+  latestIncidentAt: string | null;
 }
 
 const DEFAULT_SOURCE_TYPE: IngestionSourceType = "sycamore_api";
@@ -55,42 +97,6 @@ function normalizeFilterValue(value: string | undefined): string {
 
 function normalizeSourceType(value: string | undefined): IngestionSourceType {
   return value === "manual_pdf" ? value : DEFAULT_SOURCE_TYPE;
-}
-
-function parseBoundary(value: string | undefined, boundary: "start" | "end"): number {
-  if (!value) {
-    return Number.NaN;
-  }
-  const trimmed = value.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return Date.parse(`${trimmed}T${boundary === "start" ? "00:00:00.000" : "23:59:59.999"}Z`);
-  }
-  return Date.parse(trimmed);
-}
-
-function parseWindow(filters: DashboardFilters): DateWindow {
-  return {
-    fromEpoch: parseBoundary(filters.from, "start"),
-    toEpoch: parseBoundary(filters.to, "end")
-  };
-}
-
-function isWithinWindow(value: string | null, window: DateWindow): boolean {
-  if (!value) {
-    return Number.isNaN(window.fromEpoch) && Number.isNaN(window.toEpoch);
-  }
-
-  const epoch = Date.parse(value);
-  if (Number.isNaN(epoch)) {
-    return false;
-  }
-  if (!Number.isNaN(window.fromEpoch) && epoch < window.fromEpoch) {
-    return false;
-  }
-  if (!Number.isNaN(window.toEpoch) && epoch > window.toEpoch) {
-    return false;
-  }
-  return true;
 }
 
 function incrementCounter(record: Record<string, number>, key: string): void {
@@ -105,11 +111,38 @@ function eventTimestamp(event: DisciplineEventRecord): string | null {
   return event.incidentDate ?? event.occurredAt;
 }
 
+function toDateOnly(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+function weekBucketLabel(dateOnly: string | null): string {
+  if (!dateOnly) {
+    return "Unknown";
+  }
+
+  const date = new Date(`${dateOnly}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) {
+    return "Unknown";
+  }
+
+  const weekdayOffset = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - weekdayOffset);
+  return date.toISOString().slice(0, 10);
+}
+
 export function readDashboardFilters(searchParams: URLSearchParams): DashboardFilters {
   return {
     grade: normalizeFilterValue(searchParams.get("grade") || undefined) || undefined,
-    from: normalizeFilterValue(searchParams.get("from") || undefined) || undefined,
-    to: normalizeFilterValue(searchParams.get("to") || undefined) || undefined,
     sourceType: normalizeSourceType(searchParams.get("sourceType") || undefined)
   };
 }
@@ -118,8 +151,7 @@ export async function buildDashboardSnapshot(
   storage: StorageRepositories,
   filters: DashboardFilters
 ): Promise<DashboardSnapshot> {
-  const [latestPolicy, parseRuns, interventions, notifications, students, disciplineEvents] = await Promise.all([
-    storage.policies.getLatest(),
+  const [parseRuns, interventions, notifications, students, disciplineEvents] = await Promise.all([
     storage.parseRuns.list(),
     storage.interventions.list(),
     storage.notifications.list(),
@@ -129,120 +161,249 @@ export async function buildDashboardSnapshot(
 
   const normalizedFilters = {
     grade: normalizeFilterValue(filters.grade),
-    from: normalizeFilterValue(filters.from),
-    to: normalizeFilterValue(filters.to),
     sourceType: filters.sourceType ?? DEFAULT_SOURCE_TYPE
   };
-  const window = parseWindow(filters);
 
   const studentsById = new Map(students.map((student) => [student.id, student] as const));
-
   const filteredEvents = disciplineEvents.filter((event) => {
-    const eventGrade = event.grade ?? studentsById.get(event.localStudentId ?? "")?.grade ?? null;
-    if (normalizedFilters.grade && eventGrade !== normalizedFilters.grade) {
+    const grade = event.grade ?? studentsById.get(event.localStudentId ?? "")?.grade ?? "unknown";
+    if (normalizedFilters.grade && grade !== normalizedFilters.grade) {
       return false;
     }
-    if (normalizedFilters.sourceType && event.sourceType !== normalizedFilters.sourceType) {
-      return false;
-    }
-    return isWithinWindow(eventTimestamp(event), window);
+    return event.sourceType === normalizedFilters.sourceType;
   });
 
-  const scopedStudents = new Map<
+  const studentAggregates = new Map<string, StudentAggregate>();
+  const gradePressureMap = new Map<
     string,
     {
-      studentId: string;
-      localStudentId: string | null;
-      fullName: string;
       grade: string;
+      studentCount: number;
+      incidentCount: number;
+      totalPoints: number;
+      escalatedCount: number;
+      criticalCount: number;
     }
   >();
+  const violationMap = new Map<
+    string,
+    {
+      label: string;
+      incidentCount: number;
+      totalPoints: number;
+    }
+  >();
+  const trendMap = new Map<
+    string,
+    {
+      period: string;
+      incidentCount: number;
+      totalPoints: number;
+    }
+  >();
+  const incidentSourceCounts: Record<string, number> = {};
 
   for (const event of filteredEvents) {
-    if (!scopedStudents.has(event.studentId)) {
-      const localStudent = event.localStudentId ? studentsById.get(event.localStudentId) : undefined;
-      scopedStudents.set(event.studentId, {
+    const fallbackStudent = event.localStudentId ? studentsById.get(event.localStudentId) : undefined;
+    const fullName = event.studentName ?? fallbackStudent?.fullName ?? event.studentId;
+    const grade = event.grade ?? fallbackStudent?.grade ?? "unknown";
+    const aggregate =
+      studentAggregates.get(event.studentId) ??
+      {
         studentId: event.studentId,
         localStudentId: event.localStudentId,
-        fullName: event.studentName ?? localStudent?.fullName ?? event.studentId,
-        grade: event.grade ?? localStudent?.grade ?? "unknown"
-      });
+        fullName,
+        grade,
+        incidentCount: 0,
+        totalPoints: 0,
+        latestIncidentAt: null
+      };
+    aggregate.incidentCount += 1;
+    aggregate.totalPoints += event.points;
+    const timestamp = eventTimestamp(event);
+    if (timestamp && (!aggregate.latestIncidentAt || Date.parse(timestamp) > Date.parse(aggregate.latestIncidentAt))) {
+      aggregate.latestIncidentAt = timestamp;
     }
-  }
+    studentAggregates.set(event.studentId, aggregate);
 
-  const scopedLocalStudentIds = new Set(
-    [...scopedStudents.values()].map((student) => student.localStudentId).filter((value): value is string => Boolean(value))
-  );
+    const gradeRow =
+      gradePressureMap.get(grade) ??
+      {
+        grade,
+        studentCount: 0,
+        incidentCount: 0,
+        totalPoints: 0,
+        escalatedCount: 0,
+        criticalCount: 0
+      };
+    gradeRow.incidentCount += 1;
+    gradeRow.totalPoints += event.points;
+    gradePressureMap.set(grade, gradeRow);
 
-  const scoreByStudent = new Map<string, number>();
-  const incidentSourceCounts: Record<string, number> = {};
-  for (const event of filteredEvents) {
-    scoreByStudent.set(event.studentId, (scoreByStudent.get(event.studentId) ?? 0) + event.points);
+    const violationKey = (event.violation ?? event.violationRaw ?? event.reason ?? "Unspecified").trim() || "Unspecified";
+    const violationRow =
+      violationMap.get(violationKey) ??
+      {
+        label: violationKey,
+        incidentCount: 0,
+        totalPoints: 0
+      };
+    violationRow.incidentCount += 1;
+    violationRow.totalPoints += event.points;
+    violationMap.set(violationKey, violationRow);
+
+    const trendKey = weekBucketLabel(toDateOnly(eventTimestamp(event)));
+    const trendRow =
+      trendMap.get(trendKey) ??
+      {
+        period: trendKey,
+        incidentCount: 0,
+        totalPoints: 0
+      };
+    trendRow.incidentCount += 1;
+    trendRow.totalPoints += event.points;
+    trendMap.set(trendKey, trendRow);
+
     incrementCounter(incidentSourceCounts, event.sourceType);
   }
 
-  const filteredScores = [...scopedStudents.values()]
-    .map((student) => ({
-      student,
-      totalPoints: scoreByStudent.get(student.studentId) ?? 0
-    }))
-    .sort((left, right) => right.totalPoints - left.totalPoints);
+  const bandCountsMap = new Map<DemeritEscalationBandId, number>();
+  const actionQueue = [...studentAggregates.values()]
+    .map((student) => {
+      const band = getDemeritEscalationBand(student.totalPoints);
+      bandCountsMap.set(band.id, (bandCountsMap.get(band.id) ?? 0) + 1);
+      return {
+        studentId: student.studentId,
+        fullName: student.fullName,
+        grade: student.grade,
+        totalPoints: student.totalPoints,
+        currentBandId: band.id,
+        currentBandLabel: band.label,
+        currentBandTone: band.tone,
+        parentCommunication: band.parentCommunication,
+        adminAction: band.adminAction,
+        adminMessage: band.adminMessage,
+        policyImpact: band.policyImpact,
+        latestIncidentAt: student.latestIncidentAt,
+        localStudentId: student.localStudentId
+      };
+    })
+    .filter((student) => student.currentBandId !== "below_10")
+    .sort((left, right) => {
+      const leftBand = getDemeritEscalationBand(left.totalPoints);
+      const rightBand = getDemeritEscalationBand(right.totalPoints);
+      if (rightBand.priority !== leftBand.priority) {
+        return rightBand.priority - leftBand.priority;
+      }
+      if (right.totalPoints !== left.totalPoints) {
+        return right.totalPoints - left.totalPoints;
+      }
+      return left.fullName.localeCompare(right.fullName);
+    });
 
-  const baseThreshold = latestPolicy?.baseThreshold ?? 10;
-  const triggerLevels = latestPolicy ? buildTriggerLevels(latestPolicy) : [];
-  const countsByLabel: Record<string, number> = {};
-  for (const trigger of triggerLevels) {
-    countsByLabel[trigger.label] = filteredScores.filter(
-      (score) => score.totalPoints >= trigger.threshold
-    ).length;
+  const scopedLocalStudentIds = new Set(
+    actionQueue.map((student) => student.localStudentId).filter((value): value is string => Boolean(value))
+  );
+
+  const interventionCounts: Record<string, number> = {};
+  const activeInterventionCountByStudent = new Map<string, number>();
+  for (const intervention of interventions) {
+    if (!scopedLocalStudentIds.has(intervention.studentId)) {
+      continue;
+    }
+    incrementCounter(interventionCounts, intervention.status);
+    if (["open", "in_progress", "overdue"].includes(intervention.status)) {
+      activeInterventionCountByStudent.set(
+        intervention.studentId,
+        (activeInterventionCountByStudent.get(intervention.studentId) ?? 0) + 1
+      );
+    }
   }
 
-  const nearThresholdCount = filteredScores.filter(
-    (score) => score.totalPoints >= baseThreshold - 3 && score.totalPoints < baseThreshold
-  ).length;
-
-  const countAtX = filteredScores.filter((score) => score.totalPoints >= baseThreshold).length;
-  const countAtX10 = filteredScores.filter((score) => score.totalPoints >= baseThreshold + 10).length;
-  const countAtX20 = filteredScores.filter((score) => score.totalPoints >= baseThreshold + 20).length;
-  const countAtX30 = filteredScores.filter((score) => score.totalPoints >= baseThreshold + 30).length;
-
-  const filteredInterventions = interventions.filter((intervention) => {
-    if (!scopedLocalStudentIds.has(intervention.studentId)) {
-      return false;
-    }
-    if (!normalizedFilters.from && !normalizedFilters.to) {
-      return true;
-    }
-    return isWithinWindow(intervention.dueDate, window);
-  });
-  const filteredNotifications = notifications.filter((notification) => {
+  const notificationCounts: Record<string, number> = {};
+  const queuedNotificationsByStudent = new Map<string, number>();
+  const failedNotificationsByStudent = new Map<string, number>();
+  for (const notification of notifications) {
     if (!scopedLocalStudentIds.has(notification.studentId)) {
-      return false;
+      continue;
     }
-    if (!normalizedFilters.from && !normalizedFilters.to) {
-      return true;
+    incrementCounter(notificationCounts, notification.status);
+    if (notification.status === "queued") {
+      queuedNotificationsByStudent.set(
+        notification.studentId,
+        (queuedNotificationsByStudent.get(notification.studentId) ?? 0) + 1
+      );
     }
-    return isWithinWindow(notification.sentAt, window);
+    if (notification.status === "failed") {
+      failedNotificationsByStudent.set(
+        notification.studentId,
+        (failedNotificationsByStudent.get(notification.studentId) ?? 0) + 1
+      );
+    }
+  }
+
+  const actionQueueWithPosture = actionQueue.slice(0, 18).map((student) => ({
+    ...student,
+    activeInterventions: student.localStudentId ? activeInterventionCountByStudent.get(student.localStudentId) ?? 0 : 0,
+    queuedNotifications: student.localStudentId ? queuedNotificationsByStudent.get(student.localStudentId) ?? 0 : 0,
+    failedNotifications: student.localStudentId ? failedNotificationsByStudent.get(student.localStudentId) ?? 0 : 0
+  }));
+
+  for (const aggregate of studentAggregates.values()) {
+    const row =
+      gradePressureMap.get(aggregate.grade) ??
+      {
+        grade: aggregate.grade,
+        studentCount: 0,
+        incidentCount: 0,
+        totalPoints: 0,
+        escalatedCount: 0,
+        criticalCount: 0
+      };
+    row.studentCount += 1;
+    if (aggregate.totalPoints >= 10) {
+      row.escalatedCount += 1;
+    }
+    if (aggregate.totalPoints >= 35) {
+      row.criticalCount += 1;
+    }
+    gradePressureMap.set(aggregate.grade, row);
+  }
+
+  const bandCounts = demeritEscalationBands
+    .filter((band) => band.id !== "below_10")
+    .map((band) => ({
+      id: band.id,
+      label: band.label,
+      shortLabel: band.shortLabel,
+      tone: band.tone,
+      count: bandCountsMap.get(band.id) ?? 0,
+      parentCommunication: band.parentCommunication,
+      adminAction: band.adminAction
+    }));
+
+  const gradePressure = [...gradePressureMap.values()].sort((left, right) => {
+    if (right.totalPoints !== left.totalPoints) {
+      return right.totalPoints - left.totalPoints;
+    }
+    return left.grade.localeCompare(right.grade);
   });
 
-  const interventionCounts = filteredInterventions.reduce<Record<string, number>>((acc, intervention) => {
-    acc[intervention.status] = (acc[intervention.status] ?? 0) + 1;
-    return acc;
-  }, {});
-  const notificationCounts = filteredNotifications.reduce<Record<string, number>>((acc, notification) => {
-    acc[notification.status] = (acc[notification.status] ?? 0) + 1;
-    return acc;
-  }, {});
+  const violationHotspots = [...violationMap.values()]
+    .sort((left, right) => {
+      if (right.incidentCount !== left.incidentCount) {
+        return right.incidentCount - left.incidentCount;
+      }
+      return right.totalPoints - left.totalPoints;
+    })
+    .slice(0, 8);
 
-  const filteredParseRuns = parseRuns.filter((parseRun) => {
-    if (normalizedFilters.sourceType && parseRun.sourceType !== normalizedFilters.sourceType) {
-      return false;
-    }
-    if (!normalizedFilters.from && !normalizedFilters.to) {
-      return true;
-    }
-    return isWithinWindow(parseRun.startedAt, window);
-  });
+  const recentTrend = [...trendMap.values()]
+    .sort((left, right) => right.period.localeCompare(left.period))
+    .slice(0, 8)
+    .reverse();
+
+  const filteredParseRuns = parseRuns.filter((parseRun) => parseRun.sourceType === normalizedFilters.sourceType);
   const parseRunSourceCounts = filteredParseRuns.reduce<Record<string, number>>((acc, parseRun) => {
     acc[parseRun.sourceType] = (acc[parseRun.sourceType] ?? 0) + 1;
     return acc;
@@ -250,34 +411,26 @@ export async function buildDashboardSnapshot(
 
   return {
     filters: normalizedFilters,
-    latestPolicy,
     metrics: {
-      totalStudents: filteredScores.length,
-      incidentsInRange: filteredEvents.length,
-      countAtX,
-      countAtX10,
-      countAtX20,
-      countAtX30,
-      nearThresholdCount
+      studentsTracked: studentAggregates.size,
+      incidentsTracked: filteredEvents.length,
+      totalPoints: filteredEvents.reduce((sum, event) => sum + event.points, 0),
+      studentsAt10Plus: [...studentAggregates.values()].filter((student) => student.totalPoints >= 10).length,
+      studentsAt35Plus: [...studentAggregates.values()].filter((student) => student.totalPoints >= 35).length,
+      openInterventions: Object.entries(interventionCounts)
+        .filter(([status]) => ["open", "in_progress", "overdue"].includes(status))
+        .reduce((sum, [, count]) => sum + count, 0),
+      queuedNotifications: notificationCounts.queued ?? 0,
+      failedNotifications: notificationCounts.failed ?? 0
     },
-    countsByLabel: sortCounts(countsByLabel),
+    bandCounts,
+    actionQueue: actionQueueWithPosture,
+    gradePressure,
+    violationHotspots,
+    recentTrend,
     interventionCounts: sortCounts(interventionCounts),
     notificationCounts: sortCounts(notificationCounts),
     parseRunStatus: parseRunStatusSummary(filteredParseRuns),
-    parseRunSourceCounts: sortCounts(parseRunSourceCounts),
-    incidentSourceCounts: sortCounts(incidentSourceCounts),
-    topStudents: filteredScores
-      .filter((score) => score.totalPoints > 0)
-      .slice(0, 20)
-      .map((score) => ({
-        studentId: score.student.studentId,
-        fullName: score.student.fullName,
-        grade: score.student.grade,
-        totalPoints: score.totalPoints
-      }))
+    parseRunSourceCounts: sortCounts(parseRunSourceCounts)
   };
-}
-
-export function studentLabel(student: Student | undefined, fallbackId: string): string {
-  return student?.fullName || fallbackId;
 }

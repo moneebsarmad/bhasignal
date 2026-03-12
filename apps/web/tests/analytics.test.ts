@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ApprovedIncident, ParseRun, Policy, Student } from "@syc/domain";
+import type { ApprovedIncident, Policy, Student } from "@syc/domain";
 
-import { buildDashboardSnapshot, readDashboardFilters } from "../lib/dashboard";
+import { buildAnalyticsSnapshot, readAnalyticsFilters } from "../lib/analytics";
 import { createInMemoryStorage } from "./review-actions.test";
 
 function seedPolicy(): Policy {
@@ -100,47 +100,14 @@ function seedIncidents(): ApprovedIncident[] {
   ];
 }
 
-function seedParseRuns(): ParseRun[] {
-  return [
-    {
-      id: "run_manual_new",
-      sourceType: "manual_pdf",
-      fileName: "discipline.pdf",
-      uploadedBy: "admin@school.org",
-      triggeredBy: "admin@school.org",
-      metadataJson: "{}",
-      cursorJson: null,
-      status: "completed",
-      rowsExtracted: 1,
-      rowsFlagged: 0,
-      startedAt: "2026-03-10T09:00:00.000Z",
-      completedAt: "2026-03-10T09:05:00.000Z"
-    },
-    {
-      id: "run_sycamore_new",
-      sourceType: "sycamore_api",
-      fileName: "sycamore.json",
-      uploadedBy: "admin@school.org",
-      triggeredBy: "admin@school.org",
-      metadataJson: "{\"startDate\":\"2026-03-11\",\"endDate\":\"2026-03-11\"}",
-      cursorJson: null,
-      status: "review_required",
-      rowsExtracted: 1,
-      rowsFlagged: 0,
-      startedAt: "2026-03-11T09:00:00.000Z",
-      completedAt: "2026-03-11T09:05:00.000Z"
-    }
-  ];
-}
-
-test("readDashboardFilters defaults the dashboard to Sycamore when no source is supplied", () => {
-  const filters = readDashboardFilters(new URLSearchParams("grade=8&from=2026-03-01&to=2026-03-31"));
+test("readAnalyticsFilters defaults the analytics tab to Sycamore when no source is supplied", () => {
+  const filters = readAnalyticsFilters(new URLSearchParams("grade=8&from=2026-03-01&to=2026-03-31"));
   assert.equal(filters.sourceType, "sycamore_api");
 });
 
-test("buildDashboardSnapshot surfaces cumulative escalation posture for the live source slice", async () => {
+test("buildAnalyticsSnapshot keeps live escalation bands even when the analytics window is narrower", async () => {
   const storage = createInMemoryStorage({
-    parseRuns: seedParseRuns(),
+    parseRuns: [],
     rawIncidents: [],
     reviewTasks: [],
     students: seedStudents(),
@@ -148,26 +115,19 @@ test("buildDashboardSnapshot surfaces cumulative escalation posture for the live
     policies: [seedPolicy()]
   });
 
-  const marchSnapshot = await buildDashboardSnapshot(storage, {
-    grade: "8"
-  });
-  assert.equal(marchSnapshot.metrics.studentsTracked, 1);
-  assert.equal(marchSnapshot.metrics.studentsAt10Plus, 1);
-  assert.equal(marchSnapshot.metrics.incidentsTracked, 1);
-  assert.equal(marchSnapshot.actionQueue[0]?.studentId, "stu_2");
-  assert.equal(marchSnapshot.actionQueue[0]?.currentBandId, "points_10_19");
-  assert.match(marchSnapshot.actionQueue[0]?.parentCommunication ?? "", /phone call and an email/i);
-  assert.deepEqual(marchSnapshot.parseRunSourceCounts, { sycamore_api: 1 });
-
-  const pdfExceptionSnapshot = await buildDashboardSnapshot(storage, {
+  const snapshot = await buildAnalyticsSnapshot(storage, {
     grade: "8",
-    sourceType: "manual_pdf"
+    from: "2026-03-10",
+    to: "2026-03-10",
+    sourceType: "manual_pdf",
+    thresholdBand: "points_10_19"
   });
-  assert.equal(pdfExceptionSnapshot.metrics.studentsTracked, 1);
-  assert.equal(pdfExceptionSnapshot.metrics.incidentsTracked, 2);
-  assert.equal(pdfExceptionSnapshot.metrics.totalPoints, 16);
-  assert.equal(pdfExceptionSnapshot.metrics.studentsAt10Plus, 1);
-  assert.equal(pdfExceptionSnapshot.actionQueue[0]?.studentId, "stu_1");
-  assert.equal(pdfExceptionSnapshot.actionQueue[0]?.currentBandId, "points_10_19");
-  assert.deepEqual(pdfExceptionSnapshot.parseRunSourceCounts, { manual_pdf: 1 });
+
+  assert.equal(snapshot.summary[0]?.value, 1);
+  assert.equal(snapshot.summary[1]?.value, 1);
+  assert.equal(snapshot.summary[2]?.value, 4);
+  assert.equal(snapshot.studentRows[0]?.studentId, "stu_1");
+  assert.equal(snapshot.studentRows[0]?.totalPoints, 4);
+  assert.equal(snapshot.studentRows[0]?.currentTotalPoints, 16);
+  assert.equal(snapshot.studentRows[0]?.currentBandId, "points_10_19");
 });
