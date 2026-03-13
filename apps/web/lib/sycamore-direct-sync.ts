@@ -233,6 +233,129 @@ const SYNC_STAGE_WEIGHTS: Record<SycamoreActiveSyncStage, number> = {
   detail_fetch: 0.56,
   upsert: 0.1
 };
+const SYCAMORE_LOG_ID_KEYS = [
+  "LogID",
+  "LogId",
+  "logID",
+  "logId",
+  "ID",
+  "Id",
+  "id",
+  "DisciplineLogID",
+  "DisciplineLogId",
+  "disciplineLogId",
+  "DisciplineID",
+  "DisciplineId",
+  "disciplineId"
+] as const;
+const SYCAMORE_STUDENT_ID_KEYS = [
+  "StudentID",
+  "StudentId",
+  "studentID",
+  "studentId",
+  "student_id",
+  "StudentIDNumber",
+  "studentIDNumber",
+  "StudentNumber",
+  "studentNumber"
+] as const;
+const SYCAMORE_STUDENT_NAME_KEYS = [
+  "Student",
+  "StudentName",
+  "student",
+  "studentName",
+  "StudentFullName",
+  "studentFullName",
+  "FullName",
+  "fullName",
+  "Name",
+  "name"
+] as const;
+const SYCAMORE_GRADE_KEYS = [
+  "Grade",
+  "GradeLevel",
+  "CurrentGrade",
+  "grade",
+  "gradeLevel",
+  "currentGrade"
+] as const;
+const SYCAMORE_VIOLATION_KEYS = [
+  "Violation",
+  "Type",
+  "IncidentType",
+  "Category",
+  "Reason",
+  "violation",
+  "type",
+  "incidentType",
+  "category",
+  "reason"
+] as const;
+const SYCAMORE_AUTHOR_KEYS = [
+  "Author",
+  "AssignedBy",
+  "Staff",
+  "EnteredBy",
+  "Teacher",
+  "TeacherName",
+  "CreatedBy",
+  "author",
+  "assignedBy",
+  "staff",
+  "enteredBy",
+  "teacher",
+  "teacherName",
+  "createdBy"
+] as const;
+const SYCAMORE_RESOLUTION_KEYS = [
+  "Resolution",
+  "Consequence",
+  "Action",
+  "Result",
+  "resolution",
+  "consequence",
+  "action",
+  "result"
+] as const;
+const SYCAMORE_POINTS_KEYS = ["Points", "PointValue", "points", "pointValue"] as const;
+const SYCAMORE_DESCRIPTION_KEYS = [
+  "Description",
+  "Notes",
+  "Comment",
+  "Narrative",
+  "Details",
+  "description",
+  "notes",
+  "comment",
+  "narrative",
+  "details"
+] as const;
+const SYCAMORE_DATE_KEYS = [
+  "Date",
+  "IncidentDate",
+  "OccurredOn",
+  "CreatedDate",
+  "date",
+  "incidentDate",
+  "occurredOn",
+  "createdDate"
+] as const;
+const SYCAMORE_CREATED_AT_KEYS = ["Created", "created"] as const;
+const SYCAMORE_DETENTION_ID_KEYS = [
+  "DetentionID",
+  "DetentionId",
+  "detentionID",
+  "detentionId",
+  "detention_id",
+  "LinkedDetentionID",
+  "LinkedDetentionId",
+  "linkedDetentionID",
+  "linkedDetentionId"
+] as const;
+const SYCAMORE_QUARTER_KEYS = ["Quarter", "quarter"] as const;
+const SYCAMORE_MANAGER_NOTIFIED_KEYS = ["ManagerNotified", "managerNotified"] as const;
+const SYCAMORE_FAMILY_NOTIFIED_KEYS = ["FamilyNotified", "familyNotified"] as const;
+const SYCAMORE_STUDENT_NOTIFIED_KEYS = ["StudentNotified", "studentNotified"] as const;
 
 function normalizeLookupValue(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -417,24 +540,25 @@ function isNonBlockingWarning(warning: string): boolean {
   return (
     warning.startsWith("sycamore_no_records:") ||
     warning.startsWith("sycamore_school_list_empty_fallback_used:") ||
+    warning.startsWith("sycamore_school_rows_missing_ids_fallback_used:") ||
     warning.startsWith("sycamore_student_target_sync:")
   );
 }
 
 function listEntryLogId(entry: Record<string, unknown>): string | null {
-  return trimText(pickFirst(entry, ["LogID", "LogId", "ID", "Id", "DisciplineLogID", "DisciplineID"]));
+  return trimText(pickFirst(entry, [...SYCAMORE_LOG_ID_KEYS]));
 }
 
 function listEntryStudentId(entry: Record<string, unknown>): string | null {
-  return trimText(pickFirst(entry, ["StudentID", "StudentId", "StudentIDNumber", "StudentNumber"]));
+  return trimText(pickFirst(entry, [...SYCAMORE_STUDENT_ID_KEYS]));
 }
 
 function rosterStudentId(student: Record<string, unknown>): string | null {
-  return trimText(pickFirst(student, ["ID", "Id", "StudentID", "StudentId"]));
+  return trimText(pickFirst(student, ["ID", "Id", "id", ...SYCAMORE_STUDENT_ID_KEYS]));
 }
 
 function rosterStudentName(student: Record<string, unknown>): string | null {
-  const direct = trimText(pickFirst(student, ["Student", "StudentName", "Name", "FullName"]));
+  const direct = trimText(pickFirst(student, [...SYCAMORE_STUDENT_NAME_KEYS]));
   if (direct) {
     return direct;
   }
@@ -446,11 +570,11 @@ function rosterStudentName(student: Record<string, unknown>): string | null {
 }
 
 function rosterStudentGrade(student: Record<string, unknown>): string | null {
-  return normalizeSycamoreGrade(trimText(pickFirst(student, ["Grade", "GradeLevel", "CurrentGrade"])));
+  return normalizeSycamoreGrade(trimText(pickFirst(student, [...SYCAMORE_GRADE_KEYS])));
 }
 
 function entryOccurredOn(entry: Record<string, unknown>): string | null {
-  return toIsoDateOnly(pickFirst(entry, ["Date", "IncidentDate", "OccurredOn", "Created", "__sycamoreOccurredOn"]));
+  return toIsoDateOnly(pickFirst(entry, [...SYCAMORE_DATE_KEYS, ...SYCAMORE_CREATED_AT_KEYS, "__sycamoreOccurredOn"]));
 }
 
 function entryFallsWithinWindow(entry: Record<string, unknown>, window: { startDate: string; endDate: string }): boolean {
@@ -458,9 +582,14 @@ function entryFallsWithinWindow(entry: Record<string, unknown>, window: { startD
   return Boolean(occurredOn && occurredOn >= window.startDate && occurredOn <= window.endDate);
 }
 
+function hasResolvableDisciplineEntry(entry: Record<string, unknown>): boolean {
+  return Boolean(listEntryStudentId(entry) && listEntryLogId(entry));
+}
+
 interface DiscoveredDisciplineEntries {
   records: Array<Record<string, unknown>>;
   warnings: string[];
+  source: "school" | "student_fallback";
 }
 
 function filterRosterStudents(
@@ -519,14 +648,18 @@ async function fetchDisciplineEntriesByStudentFallback(
   dependencies: SycamoreClientDependencies,
   sleep: (ms: number) => Promise<void>,
   throttleDelayMs: number,
-  targets: StudentSyncTargets | null
+  targets: StudentSyncTargets | null,
+  fallbackReason: "school_empty" | "school_rows_missing_ids" | "targeted",
+  schoolRowCount?: number
 ): Promise<DiscoveredDisciplineEntries> {
   const students = await fetchSycamoreStudents(config, dependencies);
   const filtered = filterRosterStudents(students, targets);
   const warnings = [
-    targets
+    fallbackReason === "targeted"
       ? `sycamore_student_target_sync:${window.startDate}:${window.endDate}:${filtered.students.length}`
-      : `sycamore_school_list_empty_fallback_used:${window.startDate}:${window.endDate}:${students.length}`,
+      : fallbackReason === "school_rows_missing_ids"
+        ? `sycamore_school_rows_missing_ids_fallback_used:${window.startDate}:${window.endDate}:${schoolRowCount ?? 0}`
+        : `sycamore_school_list_empty_fallback_used:${window.startDate}:${window.endDate}:${students.length}`,
     ...filtered.warnings
   ];
   const records: Array<Record<string, unknown>> = [];
@@ -550,8 +683,8 @@ async function fetchDisciplineEntriesByStudentFallback(
         records.push({
           ...row,
           StudentID: listEntryStudentId(row) ?? studentId,
-          Student: trimText(pickFirst(row, ["Student", "StudentName"])) ?? rosterStudentName(student),
-          Grade: trimText(pickFirst(row, ["Grade", "GradeLevel"])) ?? rosterStudentGrade(student),
+          Student: trimText(pickFirst(row, [...SYCAMORE_STUDENT_NAME_KEYS])) ?? rosterStudentName(student),
+          Grade: trimText(pickFirst(row, [...SYCAMORE_GRADE_KEYS])) ?? rosterStudentGrade(student),
           __sycamoreOccurredOn: entryOccurredOn(row)
         });
       }
@@ -565,7 +698,7 @@ async function fetchDisciplineEntriesByStudentFallback(
     }
   }
 
-  return { records, warnings };
+  return { records, warnings, source: "student_fallback" };
 }
 
 async function discoverDisciplineEntries(
@@ -577,12 +710,32 @@ async function discoverDisciplineEntries(
   targets: StudentSyncTargets | null
 ): Promise<DiscoveredDisciplineEntries> {
   if (targets) {
-    return fetchDisciplineEntriesByStudentFallback(window, config, dependencies, sleep, throttleDelayMs, targets);
+    return fetchDisciplineEntriesByStudentFallback(
+      window,
+      config,
+      dependencies,
+      sleep,
+      throttleDelayMs,
+      targets,
+      "targeted"
+    );
   }
 
   const schoolLevel = await fetchSycamoreDisciplineRange(window, config, dependencies);
-  if (schoolLevel.records.length > 0) {
-    return schoolLevel;
+  const usableSchoolRecords = schoolLevel.records.filter(hasResolvableDisciplineEntry);
+  const unusableSchoolRecords = schoolLevel.records.length - usableSchoolRecords.length;
+  if (usableSchoolRecords.length > 0) {
+    return {
+      records: usableSchoolRecords,
+      warnings:
+        unusableSchoolRecords > 0
+          ? [
+              ...schoolLevel.warnings,
+              `sycamore_school_rows_missing_ids_skipped:${window.startDate}:${window.endDate}:${unusableSchoolRecords}`
+            ]
+          : schoolLevel.warnings,
+      source: "school"
+    };
   }
 
   const fallback = await fetchDisciplineEntriesByStudentFallback(
@@ -591,23 +744,27 @@ async function discoverDisciplineEntries(
     dependencies,
     sleep,
     throttleDelayMs,
-    null
+    null,
+    usableSchoolRecords.length === 0 && unusableSchoolRecords > 0 ? "school_rows_missing_ids" : "school_empty",
+    unusableSchoolRecords
   );
   if (fallback.records.length > 0) {
-    return fallback;
+    return {
+      records: fallback.records,
+      warnings: [...schoolLevel.warnings, ...fallback.warnings],
+      source: "student_fallback"
+    };
   }
 
   return {
     records: [],
-    warnings: [...schoolLevel.warnings, ...fallback.warnings]
+    warnings: [...schoolLevel.warnings, ...fallback.warnings],
+    source: "student_fallback"
   };
 }
 
 function detailDetentionId(detail: Record<string, unknown>, entry: Record<string, unknown>): string | null {
-  return trimText(
-    pickFirst(detail, ["DetentionID", "DetentionId", "LinkedDetentionID", "LinkedDetentionId"]) ??
-      pickFirst(entry, ["DetentionID", "DetentionId", "LinkedDetentionID", "LinkedDetentionId"])
-  );
+  return trimText(pickFirst(detail, [...SYCAMORE_DETENTION_ID_KEYS]) ?? pickFirst(entry, [...SYCAMORE_DETENTION_ID_KEYS]));
 }
 
 function mapDisciplineLogRecord(input: {
@@ -620,54 +777,39 @@ function mapDisciplineLogRecord(input: {
 }): SycamoreDisciplineLogRecord {
   const studentId =
     listEntryStudentId(input.entry) ??
-    trimText(pickFirst(input.detail, ["StudentID", "StudentId", "StudentIDNumber", "StudentNumber"])) ??
+    trimText(pickFirst(input.detail, [...SYCAMORE_STUDENT_ID_KEYS])) ??
     "unknown_student";
   const logId =
     listEntryLogId(input.entry) ??
-    trimText(pickFirst(input.detail, ["LogID", "LogId", "ID", "Id", "DisciplineLogID", "DisciplineID"])) ??
+    trimText(pickFirst(input.detail, [...SYCAMORE_LOG_ID_KEYS])) ??
     "unknown_log";
   const violationRaw =
-    trimText(
-      pickFirst(input.detail, ["Violation", "Type", "IncidentType", "Category", "Reason"]) ??
-        pickFirst(input.entry, ["Violation", "Type", "IncidentType", "Category", "Reason"])
-    ) ?? null;
+    trimText(pickFirst(input.detail, [...SYCAMORE_VIOLATION_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_VIOLATION_KEYS])) ??
+    null;
   const violationParts = splitSycamoreViolation(violationRaw);
   const authorNameRaw =
-    trimText(
-      pickFirst(input.detail, ["Author", "AssignedBy", "Staff", "EnteredBy", "Teacher", "TeacherName", "CreatedBy"]) ??
-        pickFirst(input.entry, ["Author", "AssignedBy", "Staff", "EnteredBy", "Teacher", "TeacherName", "CreatedBy"])
-    ) ?? null;
+    trimText(pickFirst(input.detail, [...SYCAMORE_AUTHOR_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_AUTHOR_KEYS])) ??
+    null;
   const authorName = normalizeSycamorePersonName(authorNameRaw);
   const resolution =
-    trimText(
-      pickFirst(input.detail, ["Resolution", "Consequence", "Action", "Result"]) ??
-        pickFirst(input.entry, ["Resolution", "Consequence", "Action", "Result"])
-    ) ?? null;
-  const points =
-    toInteger(pickFirst(input.detail, ["Points", "PointValue"]) ?? pickFirst(input.entry, ["Points", "PointValue"])) ?? 0;
+    trimText(pickFirst(input.detail, [...SYCAMORE_RESOLUTION_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_RESOLUTION_KEYS])) ??
+    null;
+  const points = toInteger(pickFirst(input.detail, [...SYCAMORE_POINTS_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_POINTS_KEYS])) ?? 0;
 
   return {
     sycamoreLogId: logId,
     studentId,
     studentRecordId: input.studentRecordId,
     studentName:
-      trimText(
-        pickFirst(input.detail, ["StudentName", "Student", "StudentFullName", "FullName", "Name"]) ??
-          pickFirst(input.entry, ["StudentName", "Student", "StudentFullName", "FullName", "Name"])
-      ) ?? null,
+      trimText(pickFirst(input.detail, [...SYCAMORE_STUDENT_NAME_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_STUDENT_NAME_KEYS])) ??
+      null,
     grade:
-      normalizeSycamoreGrade(
-        trimText(
-          pickFirst(input.detail, ["Grade", "GradeLevel", "CurrentGrade"]) ??
-            pickFirst(input.entry, ["Grade", "GradeLevel", "CurrentGrade"])
-        )
-      ) ?? null,
+      normalizeSycamoreGrade(trimText(pickFirst(input.detail, [...SYCAMORE_GRADE_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_GRADE_KEYS]))) ??
+      null,
     schoolId: input.schoolId,
     incidentDate:
-      toIsoDateOnly(
-        pickFirst(input.detail, ["Date", "IncidentDate", "OccurredOn", "CreatedDate"]) ??
-          pickFirst(input.entry, ["Date", "IncidentDate", "__sycamoreOccurredOn"])
-      ) ?? null,
+      toIsoDateOnly(pickFirst(input.detail, [...SYCAMORE_DATE_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_DATE_KEYS, "__sycamoreOccurredOn"])) ??
+      null,
     points,
     level: violationParts.level,
     violation: violationParts.violation,
@@ -675,20 +817,20 @@ function mapDisciplineLogRecord(input: {
     incidentType: violationParts.violationRaw ?? violationParts.violation,
     description:
       trimText(
-        pickFirst(input.detail, ["Description", "Notes", "Comment", "Narrative", "Details"]) ??
-          pickFirst(input.entry, ["Description", "Notes", "Comment", "Narrative", "Details"])
+        pickFirst(input.detail, [...SYCAMORE_DESCRIPTION_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_DESCRIPTION_KEYS])
       ) ?? null,
     resolution,
     consequence: resolution,
     authorName,
     authorNameRaw,
     assignedBy: authorName ?? authorNameRaw,
-    quarter: trimText(pickFirst(input.detail, ["Quarter"]) ?? pickFirst(input.entry, ["Quarter"])) ?? null,
+    quarter: trimText(pickFirst(input.detail, [...SYCAMORE_QUARTER_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_QUARTER_KEYS])) ?? null,
     createdAtSycamore:
-      toIsoTimestamp(pickFirst(input.detail, ["Created"]) ?? pickFirst(input.entry, ["Created"])) ?? null,
-    managerNotified: toBooleanFlag(pickFirst(input.detail, ["ManagerNotified"])),
-    familyNotified: toBooleanFlag(pickFirst(input.detail, ["FamilyNotified"])),
-    studentNotified: toBooleanFlag(pickFirst(input.detail, ["StudentNotified"])),
+      toIsoTimestamp(pickFirst(input.detail, [...SYCAMORE_CREATED_AT_KEYS]) ?? pickFirst(input.entry, [...SYCAMORE_CREATED_AT_KEYS])) ??
+      null,
+    managerNotified: toBooleanFlag(pickFirst(input.detail, [...SYCAMORE_MANAGER_NOTIFIED_KEYS])),
+    familyNotified: toBooleanFlag(pickFirst(input.detail, [...SYCAMORE_FAMILY_NOTIFIED_KEYS])),
+    studentNotified: toBooleanFlag(pickFirst(input.detail, [...SYCAMORE_STUDENT_NOTIFIED_KEYS])),
     detentionId: detailDetentionId(input.detail, input.entry),
     rawPayload: {
       listEntry: input.entry,

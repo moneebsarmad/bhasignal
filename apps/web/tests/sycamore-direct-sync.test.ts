@@ -332,6 +332,171 @@ test("runSycamoreDirectSync emits stage progress snapshots for manual syncs", as
   assert.equal(progressSnapshots.at(-1)?.detailRecordsProcessed, 1);
 });
 
+test("runSycamoreDirectSync accepts camelCase discipline keys from the school feed", async () => {
+  const { store, disciplineLogs } = createInMemorySycamoreStore();
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0"
+    },
+    async () => {
+      const result = await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.includes("/School/1002/Discipline") && url.includes("Date=2026-03-10")) {
+              return new Response(
+                JSON.stringify({
+                  Data: [{ id: "log-camel-1", studentId: "stu-ext-1", studentName: "Jane Doe", grade: "8" }]
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-camel-1")) {
+              return new Response(
+                JSON.stringify({
+                  id: "log-camel-1",
+                  studentId: "stu-ext-1",
+                  studentName: "Jane Doe",
+                  grade: "8",
+                  violation: "Level 2: Disrespect",
+                  description: "Camel-case discipline detail",
+                  resolution: "Lunch detention",
+                  author: "Dean Smith",
+                  date: "2026-03-10",
+                  points: "3"
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            throw new Error(`Unexpected URL ${url}`);
+          },
+          sleep: async () => {}
+        }
+      });
+
+      assert.equal(result.status, "success");
+      assert.equal(result.recordsDiscovered, 1);
+      assert.equal(result.recordsUpserted, 1);
+      assert.equal(disciplineLogs.length, 1);
+      assert.equal(disciplineLogs[0]?.sycamoreLogId, "log-camel-1");
+      assert.equal(disciplineLogs[0]?.studentRecordId, "stu_local_1");
+      assert.equal(disciplineLogs[0]?.studentName, "Jane Doe");
+      assert.equal(disciplineLogs[0]?.incidentDate, "2026-03-10");
+      assert.equal(disciplineLogs[0]?.level, 2);
+      assert.equal(disciplineLogs[0]?.violation, "Disrespect");
+      assert.equal(disciplineLogs[0]?.points, 3);
+      assert.equal(disciplineLogs[0]?.authorName, "Dean Smith");
+    }
+  );
+});
+
+test("runSycamoreDirectSync falls back when school-feed rows are missing resolvable ids", async () => {
+  const { store, disciplineLogs } = createInMemorySycamoreStore();
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0"
+    },
+    async () => {
+      const result = await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.includes("/School/1002/Discipline") && url.includes("Date=2026-03-10")) {
+              return new Response(
+                JSON.stringify({
+                  Data: [{ student: "Jane Doe", grade: "8", date: "2026-03-10", violation: "Disrespect" }]
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/School/1002/Students")) {
+              return new Response(
+                JSON.stringify([{ id: "stu-ext-1", firstName: "Jane", lastName: "Doe", grade: "8" }]),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline")) {
+              return new Response(JSON.stringify([{ id: "log-fallback-1", date: "2026-03-10", violation: "Disrespect" }]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-fallback-1")) {
+              return new Response(
+                JSON.stringify({
+                  id: "log-fallback-1",
+                  studentId: "stu-ext-1",
+                  studentName: "Jane Doe",
+                  grade: "8",
+                  violation: "Disrespect",
+                  resolution: "Lunch detention",
+                  author: "Dean Smith",
+                  date: "2026-03-10"
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            throw new Error(`Unexpected URL ${url}`);
+          },
+          sleep: async () => {}
+        }
+      });
+
+      assert.equal(result.status, "success");
+      assert.equal(result.recordsDiscovered, 1);
+      assert.equal(result.recordsUpserted, 1);
+      assert.equal(
+        result.warnings.some((warning) => warning.startsWith("sycamore_school_rows_missing_ids_fallback_used:")),
+        true
+      );
+      assert.equal(disciplineLogs.length, 1);
+      assert.equal(disciplineLogs[0]?.sycamoreLogId, "log-fallback-1");
+      assert.equal(disciplineLogs[0]?.studentRecordId, "stu_local_1");
+      assert.equal(disciplineLogs[0]?.studentName, "Jane Doe");
+    }
+  );
+});
+
 test("runSycamoreDirectSync falls back to per-student discipline discovery when the school feed is empty", async () => {
   const { store, syncLogs, disciplineLogs } = createInMemorySycamoreStore();
 
