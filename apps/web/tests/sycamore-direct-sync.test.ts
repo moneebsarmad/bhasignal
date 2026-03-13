@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   backfillSycamoreStudentLinks,
+  resolveSycamoreDirectSyncPlan,
   runSycamoreDirectSync,
   sycamoreDirectSyncRequestSchema,
   type SycamoreDirectSyncRequest,
@@ -846,6 +847,48 @@ test("runSycamoreDirectSync supports grade-targeted sync windows", async () => {
       assert.equal(disciplineLogs[0]?.grade, "8");
     }
   );
+});
+
+test("resolveSycamoreDirectSyncPlan returns initial backfill when no successful sync exists", async () => {
+  const { store } = createInMemorySycamoreStore();
+
+  const plan = await resolveSycamoreDirectSyncPlan({
+    store,
+    request: {}
+  });
+
+  assert.equal(plan.syncMode, "initial_backfill");
+  assert.match(plan.window.startDate, /^\d{4}-08-01$/);
+  assert.match(plan.window.endDate, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test("resolveSycamoreDirectSyncPlan returns incremental when a successful sync exists", async () => {
+  const { store, syncLogs } = createInMemorySycamoreStore();
+  syncLogs.unshift({
+    id: "sync_success_1",
+    triggeredBy: "manual",
+    startedAt: "2026-03-10T12:00:00.000Z",
+    completedAt: "2026-03-10T12:04:00.000Z",
+    recordsSynced: 14,
+    recordsDiscovered: 14,
+    recordsUpserted: 14,
+    status: "success",
+    errorMessage: null,
+    syncMode: "manual_range",
+    windowStartDate: "2026-03-09",
+    windowEndDate: "2026-03-10"
+  });
+
+  const plan = await resolveSycamoreDirectSyncPlan({
+    store,
+    request: {}
+  });
+
+  assert.equal(plan.syncMode, "incremental");
+  assert.deepEqual(plan.window, {
+    startDate: "2026-03-10",
+    endDate: new Date().toISOString().slice(0, 10)
+  });
 });
 
 test("sycamoreDirectSyncRequestSchema rejects incremental sync with a grade filter", () => {

@@ -195,7 +195,7 @@ export interface SycamoreDataOpsSummary {
   error?: string;
 }
 
-interface DirectSyncPlan {
+export interface SycamoreDirectSyncPlan {
   syncMode: SycamoreSyncMode;
   window: {
     startDate: string;
@@ -995,7 +995,7 @@ async function emitSycamoreSyncProgress(
   await callback(snapshot);
 }
 
-async function resolveSyncPlan(store: SycamoreStore, request: SycamoreDirectSyncRequest): Promise<DirectSyncPlan> {
+async function resolveSyncPlan(store: SycamoreStore, request: SycamoreDirectSyncRequest): Promise<SycamoreDirectSyncPlan> {
   if (request.startDate && request.endDate) {
     return {
       syncMode: "manual_range",
@@ -1027,6 +1027,16 @@ async function resolveSyncPlan(store: SycamoreStore, request: SycamoreDirectSync
       endDate: todayIsoDate()
     }
   };
+}
+
+export async function resolveSycamoreDirectSyncPlan(input?: {
+  request?: SycamoreDirectSyncRequest;
+  store?: SycamoreStore;
+}): Promise<SycamoreDirectSyncPlan> {
+  const request = sycamoreDirectSyncRequestSchema.parse(input?.request ?? {});
+  const store = input?.store ?? createDefaultStore();
+  await store.ensureSchema();
+  return resolveSyncPlan(store, request);
 }
 
 function createDefaultStore(): SycamoreStore {

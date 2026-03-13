@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/session";
 import { runSycamoreDirectSync, sycamoreDirectSyncRequestSchema } from "@/lib/sycamore-direct-sync";
 
+export const maxDuration = 600;
+
 function statusCodeForError(message: string): number {
   if (/not configured|required environment variable|credentials/i.test(message)) {
     return 500;
