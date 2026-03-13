@@ -1,6 +1,6 @@
 # MVP Execution Plan (Manual Ingestion First)
 
-Product: School Discipline Intelligence & Intervention App  
+Product: Signal  
 Stack: Next.js (web + API) + Python FastAPI parser service  
 Primary data source: Admin-uploaded discipline PDFs  
 Primary storage (MVP): Google Sheets  

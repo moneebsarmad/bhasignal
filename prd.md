@@ -1,5 +1,5 @@
 # Product Requirements Document (PRD)
-## Product: School Discipline Intelligence & Intervention Dashboard (MVP → v1)
+## Product: Signal (MVP → v1)
 
 ## 1) Overview
 The product is a web application for school administrators to monitor student discipline trends and intervene early based on policy-defined demerit milestones.

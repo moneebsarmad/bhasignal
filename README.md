@@ -1,4 +1,4 @@
-# Sycamore Discipline Intelligence
+# Signal
 
 Manual-first MVP monorepo scaffold.
 

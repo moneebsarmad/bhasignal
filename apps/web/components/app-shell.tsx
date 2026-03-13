@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import type { UserRole } from "@/lib/auth";
+import { APP_CATEGORY, APP_DESCRIPTION, APP_NAME } from "@/lib/brand";
 import { cn } from "@/lib/cn";
 import { getPageMeta, navSectionsByRole, shellAccentIcon as ShellAccentIcon } from "@/lib/navigation";
 import { Button, StatusBadge, buttonStyles } from "@/components/ui";
@@ -33,13 +34,11 @@ export function AppShell({
             <ShellAccentIcon className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--color-primary)]">Sycamore</p>
-            <p className="font-display text-xl text-[var(--color-ink)]">Discipline Intelligence</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--color-primary)]">{APP_CATEGORY}</p>
+            <p className="font-display text-xl text-[var(--color-ink)]">{APP_NAME}</p>
           </div>
         </div>
-        <p className="text-sm leading-7 text-[var(--color-muted)]">
-          Discipline intelligence workspace for synced records, review, and accountability.
-        </p>
+        <p className="text-sm leading-7 text-[var(--color-muted)]">{APP_DESCRIPTION}</p>
       </div>
 
       <nav className="flex-1 space-y-5">
@@ -124,7 +123,7 @@ export function AppShell({
                 </Button>
                 <div className="space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-[0.26em] text-[var(--color-primary)]">
-                    Discipline Intelligence
+                    {APP_NAME}
                   </p>
                   <div>
                     <p className="font-display text-[1.9rem] leading-none text-[var(--color-ink)]">

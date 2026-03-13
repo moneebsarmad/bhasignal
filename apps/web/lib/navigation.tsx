@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import type { UserRole } from "@/lib/auth";
+import { APP_DESCRIPTION, APP_NAME } from "@/lib/brand";
 
 export interface NavItem {
   href: string;
@@ -180,8 +181,8 @@ export const pageMetaByPath: Record<string, PageMeta> = {
 export function getPageMeta(pathname: string): PageMeta {
   return (
     pageMetaByPath[pathname] ?? {
-      title: "Sycamore Discipline Intelligence",
-      description: "Discipline intelligence workspace for synced records, review, and accountability."
+      title: APP_NAME,
+      description: APP_DESCRIPTION
     }
   );
 }

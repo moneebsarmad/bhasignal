@@ -1,5 +1,5 @@
 # Technical Blueprint
-## School Discipline Intelligence & Intervention App
+## Signal
 
 This blueprint translates the PRD into implementable architecture, delivery phases, and engineering decisions.
 

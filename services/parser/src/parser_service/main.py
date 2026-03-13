@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from parser_service.pipeline import parse_document
 
-app = FastAPI(title="Sycamore Parser Service", version="0.3.0")
+app = FastAPI(title="Signal Parser Service", version="0.3.0")
 
 
 class ParseRequest(BaseModel):

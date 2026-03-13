@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 
+import { APP_NAME } from "@/lib/brand";
 import { Button, Input } from "@/components/ui";
 
 export function LoginForm() {
@@ -45,7 +46,7 @@ export function LoginForm() {
         <section className="space-y-8">
           <div className="space-y-4">
             <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--color-primary)]">
-              Sycamore Discipline Intelligence
+              {APP_NAME}
             </p>
             <div className="space-y-4">
               <h1 className="max-w-2xl font-display text-5xl leading-[1.02] text-[var(--color-ink)] sm:text-6xl">

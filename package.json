@@ -1,8 +1,8 @@
 {
-  "name": "sycamore-disc",
+  "name": "signal",
   "private": true,
   "version": "0.1.0",
-  "description": "School Discipline Intelligence MVP monorepo",
+  "description": "Signal discipline operations monorepo",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -20,4 +20,3 @@
     "node": ">=20.0.0"
   }
 }
-
