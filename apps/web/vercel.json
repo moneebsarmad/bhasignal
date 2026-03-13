@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/sycamore/sync",
+      "schedule": "0 2 * * *"
+    }
+  ]
+}
