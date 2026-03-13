@@ -80,6 +80,8 @@ interface SycamoreSyncProgressSnapshot {
   rosterStudentsFetched: number;
   rosterStudentsUpserted: number;
   rosterStudentsLinked: number;
+  discoveryStudentsProcessed: number;
+  discoveryStudentsTotal: number;
   discoveredRecords: number;
   detailRecordsProcessed: number;
   detailRecordsTotal: number;
@@ -195,7 +197,11 @@ function syncStageSubtitle(progress: SycamoreSyncProgressSnapshot, stage: (typeo
         ? `${progress.rosterStudentsUpserted} students refreshed`
         : "Preparing student links";
     case "discovery":
-      return progress.discoveredRecords > 0 ? `${progress.discoveredRecords} records found` : "Finding matching incidents";
+      return progress.discoveryStudentsTotal > 0
+        ? `${progress.discoveryStudentsProcessed} of ${progress.discoveryStudentsTotal} students scanned`
+        : progress.discoveredRecords > 0
+          ? `${progress.discoveredRecords} records found`
+          : "Finding matching incidents";
     case "detail_fetch":
       return progress.detailRecordsTotal > 0
         ? `${progress.detailRecordsProcessed} of ${progress.detailRecordsTotal} detailed`
@@ -713,7 +719,11 @@ export function IngestionClient() {
                   <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
                     {syncProgress.discoveredRecords}
                   </p>
-                  <p className="mt-1 text-sm text-[var(--color-muted)]">Incidents found in the selected window</p>
+                  <p className="mt-1 text-sm text-[var(--color-muted)]">
+                    {syncProgress.discoveryStudentsTotal > 0
+                      ? `${syncProgress.discoveryStudentsProcessed} of ${syncProgress.discoveryStudentsTotal} students scanned`
+                      : "Incidents found in the selected window"}
+                  </p>
                 </div>
                 <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">

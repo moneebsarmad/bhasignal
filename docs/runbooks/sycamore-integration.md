@@ -20,6 +20,7 @@ SYCAMORE_API_BASE_URL=https://app.sycamoreschool.com/api/v1
 SYCAMORE_DISCIPLINE_PATH_TEMPLATE=/School/{schoolId}/Discipline
 CRON_SECRET=...
 SYCAMORE_REQUEST_DELAY_MS=150
+SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY=4
 SYCAMORE_SCHOOL_YEAR_START_MONTH=8
 SYCAMORE_SCHOOL_YEAR_START_DAY=1
 SYCAMORE_INCREMENTAL_OVERLAP_DAYS=1
@@ -64,3 +65,4 @@ Default sync behavior:
 - Local student linking is opportunistic through `students.external_id`.
 - Idempotency is based on Sycamore `sycamore_log_id`.
 - The app prefers the school-wide discipline feed first, then falls back to per-student discipline discovery if the school feed returns no rows for the requested window.
+- For large schools, the per-student fallback can still take several minutes. Tune `SYCAMORE_REQUEST_DELAY_MS` and `SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY` together if the deployment runtime is too slow.

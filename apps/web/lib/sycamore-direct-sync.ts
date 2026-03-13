@@ -134,6 +134,8 @@ export interface SycamoreSyncProgressSnapshot {
   rosterStudentsFetched: number;
   rosterStudentsUpserted: number;
   rosterStudentsLinked: number;
+  discoveryStudentsProcessed: number;
+  discoveryStudentsTotal: number;
   discoveredRecords: number;
   detailRecordsProcessed: number;
   detailRecordsTotal: number;
@@ -536,6 +538,10 @@ function isRosterSyncEnabled(): boolean {
   return !(raw === "false" || raw === "0" || raw === "off");
 }
 
+function studentFallbackDiscoveryConcurrency(): number {
+  return Math.min(envNumber("SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY", 4, 1), 12);
+}
+
 function isNonBlockingWarning(warning: string): boolean {
   return (
     warning.startsWith("sycamore_no_records:") ||
@@ -590,6 +596,13 @@ interface DiscoveredDisciplineEntries {
   records: Array<Record<string, unknown>>;
   warnings: string[];
   source: "school" | "student_fallback";
+}
+
+interface StudentFallbackDiscoveryProgress {
+  processedStudents: number;
+  totalStudents: number;
+  discoveredRecords: number;
+  reason: "school_empty" | "school_rows_missing_ids" | "targeted";
 }
 
 function filterRosterStudents(
@@ -650,7 +663,8 @@ async function fetchDisciplineEntriesByStudentFallback(
   throttleDelayMs: number,
   targets: StudentSyncTargets | null,
   fallbackReason: "school_empty" | "school_rows_missing_ids" | "targeted",
-  schoolRowCount?: number
+  schoolRowCount?: number,
+  onProgress?: (progress: StudentFallbackDiscoveryProgress) => void | Promise<void>
 ): Promise<DiscoveredDisciplineEntries> {
   const students = await fetchSycamoreStudents(config, dependencies);
   const filtered = filterRosterStudents(students, targets);
@@ -663,40 +677,83 @@ async function fetchDisciplineEntriesByStudentFallback(
     ...filtered.warnings
   ];
   const records: Array<Record<string, unknown>> = [];
-
-  for (let index = 0; index < filtered.students.length; index += 1) {
-    const student = filtered.students[index] as Record<string, unknown>;
-    const studentId = rosterStudentId(student);
-
-    if (!studentId) {
-      warnings.push(`sycamore_student_scan_skipped_missing_id:${JSON.stringify(student)}`);
-      continue;
+  const totalStudents = filtered.students.length;
+  let processedStudents = 0;
+  let nextStudentIndex = 0;
+  const progressBatchSize = totalStudents > 250 ? 25 : 10;
+  const emitProgress = async (force = false) => {
+    if (!onProgress) {
+      return;
     }
 
-    try {
-      const overview = await fetchSycamoreStudentDisciplineOverview(studentId, config, dependencies);
-      for (const row of overview) {
-        if (!entryFallsWithinWindow(row, window)) {
-          continue;
-        }
+    if (
+      !force &&
+      processedStudents !== totalStudents &&
+      processedStudents !== 1 &&
+      processedStudents % progressBatchSize !== 0
+    ) {
+      return;
+    }
 
-        records.push({
-          ...row,
-          StudentID: listEntryStudentId(row) ?? studentId,
-          Student: trimText(pickFirst(row, [...SYCAMORE_STUDENT_NAME_KEYS])) ?? rosterStudentName(student),
-          Grade: trimText(pickFirst(row, [...SYCAMORE_GRADE_KEYS])) ?? rosterStudentGrade(student),
-          __sycamoreOccurredOn: entryOccurredOn(row)
-        });
+    await onProgress({
+      processedStudents,
+      totalStudents,
+      discoveredRecords: records.length,
+      reason: fallbackReason
+    });
+  };
+
+  await emitProgress(true);
+
+  const workerCount = Math.min(studentFallbackDiscoveryConcurrency(), Math.max(totalStudents, 1));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextStudentIndex;
+      nextStudentIndex += 1;
+      if (index >= totalStudents) {
+        return;
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown student discipline scan error.";
-      warnings.push(`sycamore_student_scan_failed:${studentId}:${message}`);
-    }
 
-    if (throttleDelayMs > 0 && index < filtered.students.length - 1) {
-      await sleep(throttleDelayMs);
+      const student = filtered.students[index] as Record<string, unknown>;
+      const studentId = rosterStudentId(student);
+
+      if (!studentId) {
+        warnings.push(`sycamore_student_scan_skipped_missing_id:${JSON.stringify(student)}`);
+        processedStudents += 1;
+        await emitProgress();
+        continue;
+      }
+
+      try {
+        const overview = await fetchSycamoreStudentDisciplineOverview(studentId, config, dependencies);
+        for (const row of overview) {
+          if (!entryFallsWithinWindow(row, window)) {
+            continue;
+          }
+
+          records.push({
+            ...row,
+            StudentID: listEntryStudentId(row) ?? studentId,
+            Student: trimText(pickFirst(row, [...SYCAMORE_STUDENT_NAME_KEYS])) ?? rosterStudentName(student),
+            Grade: trimText(pickFirst(row, [...SYCAMORE_GRADE_KEYS])) ?? rosterStudentGrade(student),
+            __sycamoreOccurredOn: entryOccurredOn(row)
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown student discipline scan error.";
+        warnings.push(`sycamore_student_scan_failed:${studentId}:${message}`);
+      }
+
+      processedStudents += 1;
+      await emitProgress();
+
+      if (throttleDelayMs > 0 && nextStudentIndex < totalStudents) {
+        await sleep(throttleDelayMs);
+      }
     }
-  }
+  });
+
+  await Promise.all(workers);
 
   return { records, warnings, source: "student_fallback" };
 }
@@ -707,7 +764,8 @@ async function discoverDisciplineEntries(
   dependencies: SycamoreClientDependencies,
   sleep: (ms: number) => Promise<void>,
   throttleDelayMs: number,
-  targets: StudentSyncTargets | null
+  targets: StudentSyncTargets | null,
+  onProgress?: (progress: StudentFallbackDiscoveryProgress) => void | Promise<void>
 ): Promise<DiscoveredDisciplineEntries> {
   if (targets) {
     return fetchDisciplineEntriesByStudentFallback(
@@ -717,7 +775,9 @@ async function discoverDisciplineEntries(
       sleep,
       throttleDelayMs,
       targets,
-      "targeted"
+      "targeted",
+      undefined,
+      onProgress
     );
   }
 
@@ -746,7 +806,8 @@ async function discoverDisciplineEntries(
     throttleDelayMs,
     null,
     usableSchoolRecords.length === 0 && unusableSchoolRecords > 0 ? "school_rows_missing_ids" : "school_empty",
-    unusableSchoolRecords
+    unusableSchoolRecords,
+    onProgress
   );
   if (fallback.records.length > 0) {
     return {
@@ -1095,6 +1156,8 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
     rosterStudentsFetched: 0,
     rosterStudentsUpserted: 0,
     rosterStudentsLinked: 0,
+    discoveryStudentsProcessed: 0,
+    discoveryStudentsTotal: 0,
     discoveredRecords: 0,
     detailRecordsProcessed: 0,
     detailRecordsTotal: 0,
@@ -1128,6 +1191,8 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
       rosterStudentsFetched: progressState.rosterStudentsFetched,
       rosterStudentsUpserted: progressState.rosterStudentsUpserted,
       rosterStudentsLinked: progressState.rosterStudentsLinked,
+      discoveryStudentsProcessed: progressState.discoveryStudentsProcessed,
+      discoveryStudentsTotal: progressState.discoveryStudentsTotal,
       discoveredRecords: progressState.discoveredRecords,
       detailRecordsProcessed: progressState.detailRecordsProcessed,
       detailRecordsTotal: progressState.detailRecordsTotal,
@@ -1165,13 +1230,50 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
       stageDescription: "Collecting the set of discipline records that match this sync window.",
       message: "Discovering discipline records in Sycamore."
     });
-    const fetched = await discoverDisciplineEntries(plan.window, config, dependencies, sleep, throttleDelayMs, studentTargets);
+    const fetched = await discoverDisciplineEntries(
+      plan.window,
+      config,
+      dependencies,
+      sleep,
+      throttleDelayMs,
+      studentTargets,
+      async (discoveryProgress) => {
+        progressState.discoveryStudentsProcessed = discoveryProgress.processedStudents;
+        progressState.discoveryStudentsTotal = discoveryProgress.totalStudents;
+        progressState.discoveredRecords = discoveryProgress.discoveredRecords;
+        const stageProgress =
+          discoveryProgress.totalStudents > 0 ? discoveryProgress.processedStudents / discoveryProgress.totalStudents : 0;
+        const stageDescription =
+          discoveryProgress.reason === "targeted"
+            ? "Scanning the selected Sycamore student timelines for matching discipline records."
+            : "Scanning individual Sycamore student timelines because the school-wide feed returned no usable rows.";
+        const message =
+          discoveryProgress.totalStudents > 0
+            ? `Scanned ${discoveryProgress.processedStudents} of ${discoveryProgress.totalStudents} students and found ${discoveryProgress.discoveredRecords} record${discoveryProgress.discoveredRecords === 1 ? "" : "s"} so far.`
+            : "No students matched the current fallback scan.";
+
+        await pushProgress("discovery", {
+          stageProgress,
+          stageDescription,
+          message
+        });
+      }
+    );
     warnings.push(...fetched.warnings);
+    if (fetched.source === "student_fallback") {
+      progressState.discoveryStudentsProcessed = progressState.discoveryStudentsTotal;
+    }
     progressState.discoveredRecords = fetched.records.length;
     await pushProgress("discovery", {
       stageProgress: 1,
-      stageDescription: "Collecting the set of discipline records that match this sync window.",
-      message: `Discovery complete: ${fetched.records.length} record${fetched.records.length === 1 ? "" : "s"} found.`
+      stageDescription:
+        fetched.source === "student_fallback"
+          ? "Finished scanning individual Sycamore student timelines for this sync window."
+          : "Collecting the set of discipline records that match this sync window.",
+      message:
+        fetched.source === "student_fallback" && progressState.discoveryStudentsTotal > 0
+          ? `Discovery complete after scanning ${progressState.discoveryStudentsProcessed} students: ${fetched.records.length} record${fetched.records.length === 1 ? "" : "s"} found.`
+          : `Discovery complete: ${fetched.records.length} record${fetched.records.length === 1 ? "" : "s"} found.`
     });
 
     const uniqueStudentIds = [...new Set(fetched.records.map(listEntryStudentId).filter((value): value is string => Boolean(value)))];

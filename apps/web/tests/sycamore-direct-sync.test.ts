@@ -497,6 +497,110 @@ test("runSycamoreDirectSync falls back when school-feed rows are missing resolva
   );
 });
 
+test("runSycamoreDirectSync emits discovery progress while scanning fallback students", async () => {
+  const { store } = createInMemorySycamoreStore();
+  const progressSnapshots: SycamoreSyncProgressSnapshot[] = [];
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY: "1"
+    },
+    async () => {
+      await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        onProgress(snapshot) {
+          progressSnapshots.push(snapshot);
+        },
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.includes("/School/1002/Discipline") && url.includes("Date=2026-03-10")) {
+              return new Response(null, { status: 204 });
+            }
+            if (url.endsWith("/School/1002/Students")) {
+              return new Response(
+                JSON.stringify([
+                  { ID: "stu-ext-1", FirstName: "Jane", LastName: "Doe", Grade: "8" },
+                  { ID: "stu-ext-2", FirstName: "John", LastName: "Smith", Grade: "8" }
+                ]),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline")) {
+              return new Response(JSON.stringify([{ ID: "log-progress-1", Date: "2026-03-10", Violation: "Disrespect" }]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-2/Discipline")) {
+              return new Response(JSON.stringify([]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-progress-1")) {
+              return new Response(
+                JSON.stringify({
+                  ID: "log-progress-1",
+                  StudentID: "stu-ext-1",
+                  StudentName: "Jane Doe",
+                  Grade: "8",
+                  Violation: "Disrespect",
+                  Resolution: "Lunch detention",
+                  Author: "Dean Smith",
+                  Date: "2026-03-10"
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            throw new Error(`Unexpected URL ${url}`);
+          },
+          sleep: async () => {}
+        }
+      });
+    }
+  );
+
+  assert.equal(
+    progressSnapshots.some(
+      (snapshot) =>
+        snapshot.stage === "discovery" &&
+        snapshot.discoveryStudentsTotal === 2 &&
+        snapshot.discoveryStudentsProcessed === 1 &&
+        snapshot.discoveredRecords === 1
+    ),
+    true
+  );
+  assert.equal(
+    progressSnapshots.some(
+      (snapshot) =>
+        snapshot.stage === "discovery" &&
+        snapshot.discoveryStudentsTotal === 2 &&
+        snapshot.discoveryStudentsProcessed === 2
+    ),
+    true
+  );
+});
+
 test("runSycamoreDirectSync falls back to per-student discipline discovery when the school feed is empty", async () => {
   const { store, syncLogs, disciplineLogs } = createInMemorySycamoreStore();
 

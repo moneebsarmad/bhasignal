@@ -7,6 +7,8 @@ import {
   type SycamoreSyncProgressSnapshot
 } from "@/lib/sycamore-direct-sync";
 
+export const maxDuration = 800;
+
 function statusCodeForError(message: string): number {
   if (/not configured|required environment variable|credentials/i.test(message)) {
     return 500;
