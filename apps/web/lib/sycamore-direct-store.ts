@@ -77,6 +77,7 @@ export interface SycamoreStore {
   getDisciplineCounts(): Promise<{ total: number; linked: number }>;
   resolveStudentRecordLinks(externalStudentIds: string[]): Promise<Map<string, string>>;
   backfillDisciplineLogLinks(studentLinks: Map<string, string>): Promise<number>;
+  findExistingDisciplineLogIds(logIds: string[]): Promise<Set<string>>;
   upsertDisciplineLogs(records: SycamoreDisciplineLogRecord[]): Promise<void>;
 }
 
@@ -430,6 +431,30 @@ export function createSupabaseSycamoreStore(client: SupabaseClient): SycamoreSto
         linkedRows += ((data as RowRecord[] | null) ?? []).length;
       }
       return linkedRows;
+    },
+
+    async findExistingDisciplineLogIds(logIds) {
+      const normalizedIds = [...new Set(logIds.map((value) => value.trim()).filter(Boolean))];
+      if (normalizedIds.length === 0) {
+        return new Set<string>();
+      }
+
+      const { data, error } = await client
+        .from("sycamore_discipline_logs")
+        .select("sycamore_log_id")
+        .in("sycamore_log_id", normalizedIds);
+      if (error) {
+        throw new Error(toSupabaseErrorMessage("sycamore_discipline_logs", "select existing log ids", error));
+      }
+
+      const existingIds = new Set<string>();
+      for (const row of (data as RowRecord[] | null) ?? []) {
+        const logId = nullableCell(row, "sycamore_log_id");
+        if (logId) {
+          existingIds.add(logId);
+        }
+      }
+      return existingIds;
     },
 
     async upsertDisciplineLogs(records) {

@@ -228,6 +228,10 @@ export interface SycamoreRosterSyncResult {
   warnings: string[];
 }
 
+interface InternalSycamoreRosterSyncResult extends SycamoreRosterSyncResult {
+  rosterRecords: Array<Record<string, unknown>>;
+}
+
 const SYNC_STAGE_ORDER: SycamoreActiveSyncStage[] = ["roster", "discovery", "detail_fetch", "upsert"];
 const SYNC_STAGE_WEIGHTS: Record<SycamoreActiveSyncStage, number> = {
   roster: 0.16,
@@ -542,11 +546,17 @@ function studentFallbackDiscoveryConcurrency(): number {
   return Math.min(envNumber("SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY", 4, 1), 12);
 }
 
+function detailFetchConcurrency(): number {
+  return Math.min(envNumber("SYCAMORE_DETAIL_FETCH_CONCURRENCY", 4, 1), 12);
+}
+
 function isNonBlockingWarning(warning: string): boolean {
   return (
     warning.startsWith("sycamore_no_records:") ||
     warning.startsWith("sycamore_school_list_empty_fallback_used:") ||
     warning.startsWith("sycamore_school_rows_missing_ids_fallback_used:") ||
+    warning.startsWith("sycamore_school_rows_missing_ids_candidate_fallback_used:") ||
+    warning.startsWith("sycamore_existing_logs_skipped:") ||
     warning.startsWith("sycamore_student_target_sync:")
   );
 }
@@ -602,7 +612,124 @@ interface StudentFallbackDiscoveryProgress {
   processedStudents: number;
   totalStudents: number;
   discoveredRecords: number;
-  reason: "school_empty" | "school_rows_missing_ids" | "targeted";
+  reason: "school_empty" | "school_rows_missing_ids" | "school_hint_candidates" | "targeted";
+}
+
+interface SchoolHintFallbackTargets {
+  targets: StudentSyncTargets | null;
+  matchedHintCount: number;
+  unmatchedHintCount: number;
+  candidateStudentCount: number;
+}
+
+function resolveSchoolHintFallbackTargets(
+  schoolRows: Array<Record<string, unknown>>,
+  rosterStudents: Array<Record<string, unknown>>
+): SchoolHintFallbackTargets {
+  if (schoolRows.length === 0 || rosterStudents.length === 0) {
+    return {
+      targets: null,
+      matchedHintCount: 0,
+      unmatchedHintCount: schoolRows.length,
+      candidateStudentCount: 0
+    };
+  }
+
+  const rosterById = new Map<string, Record<string, unknown>>();
+  const rosterByNormalizedName = new Map<string, Array<Record<string, unknown>>>();
+  for (const student of rosterStudents) {
+    const studentId = rosterStudentId(student);
+    if (studentId && !rosterById.has(studentId)) {
+      rosterById.set(studentId, student);
+    }
+
+    const studentName = rosterStudentName(student);
+    if (!studentName) {
+      continue;
+    }
+
+    const normalizedName = normalizeLookupValue(studentName);
+    const entries = rosterByNormalizedName.get(normalizedName) ?? [];
+    entries.push(student);
+    rosterByNormalizedName.set(normalizedName, entries);
+  }
+
+  const candidateIds = new Set<string>();
+  let matchedHintCount = 0;
+  let unmatchedHintCount = 0;
+
+  for (const row of schoolRows) {
+    let matched = false;
+    const directStudentId = listEntryStudentId(row);
+    if (directStudentId && rosterById.has(directStudentId)) {
+      candidateIds.add(directStudentId);
+      matched = true;
+    }
+
+    if (!matched) {
+      const rowName = trimText(pickFirst(row, [...SYCAMORE_STUDENT_NAME_KEYS]));
+      const normalizedName = rowName ? normalizeLookupValue(rowName) : "";
+      const rowGrade = normalizeSycamoreGrade(trimText(pickFirst(row, [...SYCAMORE_GRADE_KEYS])));
+      let matchingStudents = normalizedName ? [...(rosterByNormalizedName.get(normalizedName) ?? [])] : [];
+      if (rowGrade && matchingStudents.length > 1) {
+        const gradeMatches = matchingStudents.filter((student) => rosterStudentGrade(student) === rowGrade);
+        if (gradeMatches.length > 0) {
+          matchingStudents = gradeMatches;
+        }
+      }
+
+      for (const student of matchingStudents) {
+        const studentId = rosterStudentId(student);
+        if (!studentId) {
+          continue;
+        }
+        candidateIds.add(studentId);
+        matched = true;
+      }
+    }
+
+    if (matched) {
+      matchedHintCount += 1;
+    } else {
+      unmatchedHintCount += 1;
+    }
+  }
+
+  return {
+    targets:
+      candidateIds.size > 0
+        ? {
+            studentNames: [],
+            studentIds: [...candidateIds],
+            grade: null
+          }
+        : null,
+    matchedHintCount,
+    unmatchedHintCount,
+    candidateStudentCount: candidateIds.size
+  };
+}
+
+function dedupeDisciplineEntries(records: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const seenKeys = new Set<string>();
+  const deduped: Array<Record<string, unknown>> = [];
+
+  for (const record of records) {
+    const studentId = listEntryStudentId(record);
+    const logId = listEntryLogId(record);
+    const key = studentId && logId ? `${studentId}|${logId}` : JSON.stringify(record);
+    if (seenKeys.has(key)) {
+      continue;
+    }
+    seenKeys.add(key);
+    deduped.push(record);
+  }
+
+  return deduped;
+}
+
+function shouldSkipExistingHistoricalLogs(plan: SycamoreDirectSyncPlan): boolean {
+  return plan.syncMode !== "incremental" && plan.window.endDate < todayIsoDate();
 }
 
 function filterRosterStudents(
@@ -662,15 +789,21 @@ async function fetchDisciplineEntriesByStudentFallback(
   sleep: (ms: number) => Promise<void>,
   throttleDelayMs: number,
   targets: StudentSyncTargets | null,
-  fallbackReason: "school_empty" | "school_rows_missing_ids" | "targeted",
+  fallbackReason: "school_empty" | "school_rows_missing_ids" | "school_hint_candidates" | "targeted",
   schoolRowCount?: number,
-  onProgress?: (progress: StudentFallbackDiscoveryProgress) => void | Promise<void>
+  onProgress?: (progress: StudentFallbackDiscoveryProgress) => void | Promise<void>,
+  prefetchedStudents?: Array<Record<string, unknown>> | null
 ): Promise<DiscoveredDisciplineEntries> {
-  const students = await fetchSycamoreStudents(config, dependencies);
+  const students =
+    prefetchedStudents && prefetchedStudents.length > 0
+      ? prefetchedStudents
+      : await fetchSycamoreStudents(config, dependencies);
   const filtered = filterRosterStudents(students, targets);
   const warnings = [
     fallbackReason === "targeted"
       ? `sycamore_student_target_sync:${window.startDate}:${window.endDate}:${filtered.students.length}`
+      : fallbackReason === "school_hint_candidates"
+        ? `sycamore_school_rows_missing_ids_candidate_fallback_used:${window.startDate}:${window.endDate}:${schoolRowCount ?? 0}:${filtered.students.length}`
       : fallbackReason === "school_rows_missing_ids"
         ? `sycamore_school_rows_missing_ids_fallback_used:${window.startDate}:${window.endDate}:${schoolRowCount ?? 0}`
         : `sycamore_school_list_empty_fallback_used:${window.startDate}:${window.endDate}:${students.length}`,
@@ -755,7 +888,7 @@ async function fetchDisciplineEntriesByStudentFallback(
 
   await Promise.all(workers);
 
-  return { records, warnings, source: "student_fallback" };
+  return { records: dedupeDisciplineEntries(records), warnings, source: "student_fallback" };
 }
 
 async function discoverDisciplineEntries(
@@ -765,7 +898,8 @@ async function discoverDisciplineEntries(
   sleep: (ms: number) => Promise<void>,
   throttleDelayMs: number,
   targets: StudentSyncTargets | null,
-  onProgress?: (progress: StudentFallbackDiscoveryProgress) => void | Promise<void>
+  onProgress?: (progress: StudentFallbackDiscoveryProgress) => void | Promise<void>,
+  prefetchedRosterStudents?: Array<Record<string, unknown>> | null
 ): Promise<DiscoveredDisciplineEntries> {
   if (targets) {
     return fetchDisciplineEntriesByStudentFallback(
@@ -777,7 +911,8 @@ async function discoverDisciplineEntries(
       targets,
       "targeted",
       undefined,
-      onProgress
+      onProgress,
+      prefetchedRosterStudents
     );
   }
 
@@ -786,7 +921,7 @@ async function discoverDisciplineEntries(
   const unusableSchoolRecords = schoolLevel.records.length - usableSchoolRecords.length;
   if (usableSchoolRecords.length > 0) {
     return {
-      records: usableSchoolRecords,
+      records: dedupeDisciplineEntries(usableSchoolRecords),
       warnings:
         unusableSchoolRecords > 0
           ? [
@@ -798,6 +933,33 @@ async function discoverDisciplineEntries(
     };
   }
 
+  const rosterStudentsForFallback =
+    prefetchedRosterStudents && prefetchedRosterStudents.length > 0
+      ? prefetchedRosterStudents
+      : await fetchSycamoreStudents(config, dependencies);
+  const hintTargets = resolveSchoolHintFallbackTargets(schoolLevel.records, rosterStudentsForFallback);
+  if (hintTargets.targets && hintTargets.unmatchedHintCount === 0) {
+    const candidateFallback = await fetchDisciplineEntriesByStudentFallback(
+      window,
+      config,
+      dependencies,
+      sleep,
+      throttleDelayMs,
+      hintTargets.targets,
+      "school_hint_candidates",
+      unusableSchoolRecords,
+      onProgress,
+      rosterStudentsForFallback
+    );
+    if (candidateFallback.records.length > 0) {
+      return {
+        records: dedupeDisciplineEntries(candidateFallback.records),
+        warnings: [...schoolLevel.warnings, ...candidateFallback.warnings],
+        source: "student_fallback"
+      };
+    }
+  }
+
   const fallback = await fetchDisciplineEntriesByStudentFallback(
     window,
     config,
@@ -807,11 +969,12 @@ async function discoverDisciplineEntries(
     null,
     usableSchoolRecords.length === 0 && unusableSchoolRecords > 0 ? "school_rows_missing_ids" : "school_empty",
     unusableSchoolRecords,
-    onProgress
+    onProgress,
+    rosterStudentsForFallback
   );
   if (fallback.records.length > 0) {
     return {
-      records: fallback.records,
+      records: dedupeDisciplineEntries(fallback.records),
       warnings: [...schoolLevel.warnings, ...fallback.warnings],
       source: "student_fallback"
     };
@@ -1043,14 +1206,15 @@ function createDefaultStore(): SycamoreStore {
   return createSupabaseSycamoreStore(createSupabaseServerClient());
 }
 
-function emptyRosterSyncResult(): SycamoreRosterSyncResult {
+function emptyRosterSyncResult(): InternalSycamoreRosterSyncResult {
   return {
     attempted: false,
     fetchedStudents: 0,
     upsertedStudents: 0,
     linkedStudents: 0,
     linkedDisciplineLogs: 0,
-    warnings: []
+    warnings: [],
+    rosterRecords: []
   };
 }
 
@@ -1059,7 +1223,7 @@ async function syncSycamoreRosterLinks(input: {
   store: SycamoreStore;
   config: SycamoreClientConfig;
   dependencies?: SycamoreClientDependencies;
-}): Promise<SycamoreRosterSyncResult> {
+}): Promise<InternalSycamoreRosterSyncResult> {
   if (!input.storage || !isRosterSyncEnabled()) {
     return emptyRosterSyncResult();
   }
@@ -1087,7 +1251,8 @@ async function syncSycamoreRosterLinks(input: {
       upsertedStudents: normalized.students.length,
       linkedStudents: studentLinks.size,
       linkedDisciplineLogs,
-      warnings: normalized.warnings
+      warnings: normalized.warnings,
+      rosterRecords
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Sycamore roster sync failure.";
@@ -1097,7 +1262,8 @@ async function syncSycamoreRosterLinks(input: {
       upsertedStudents: 0,
       linkedStudents: 0,
       linkedDisciplineLogs: 0,
-      warnings: [`sycamore_roster_sync_failed:${message}`]
+      warnings: [`sycamore_roster_sync_failed:${message}`],
+      rosterRecords: []
     };
   }
 }
@@ -1256,6 +1422,8 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
         const stageDescription =
           discoveryProgress.reason === "targeted"
             ? "Scanning the selected Sycamore student timelines for matching discipline records."
+            : discoveryProgress.reason === "school_hint_candidates"
+              ? "Scanning candidate student timelines derived from school-feed rows because the feed lacked stable IDs."
             : "Scanning individual Sycamore student timelines because the school-wide feed returned no usable rows.";
         const message =
           discoveryProgress.totalStudents > 0
@@ -1267,18 +1435,24 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
           stageDescription,
           message
         });
-      }
+      },
+      rosterSync.rosterRecords
     );
     warnings.push(...fetched.warnings);
     if (fetched.source === "student_fallback") {
       progressState.discoveryStudentsProcessed = progressState.discoveryStudentsTotal;
     }
     progressState.discoveredRecords = fetched.records.length;
+    const usedCandidateFallback = fetched.warnings.some((warning) =>
+      warning.startsWith("sycamore_school_rows_missing_ids_candidate_fallback_used:")
+    );
     await pushProgress("discovery", {
       stageProgress: 1,
       stageDescription:
         fetched.source === "student_fallback"
-          ? "Finished scanning individual Sycamore student timelines for this sync window."
+          ? usedCandidateFallback
+            ? "Finished scanning candidate student timelines derived from school-feed rows for this sync window."
+            : "Finished scanning individual Sycamore student timelines for this sync window."
           : "Collecting the set of discipline records that match this sync window.",
       message:
         fetched.source === "student_fallback" && progressState.discoveryStudentsTotal > 0
@@ -1289,6 +1463,13 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
     const uniqueStudentIds = [...new Set(fetched.records.map(listEntryStudentId).filter((value): value is string => Boolean(value)))];
     const studentLinks = await store.resolveStudentRecordLinks(uniqueStudentIds);
     const records: SycamoreDisciplineLogRecord[] = [];
+    const existingLogIds = shouldSkipExistingHistoricalLogs(plan)
+      ? await store.findExistingDisciplineLogIds(
+          [...new Set(fetched.records.map(listEntryLogId).filter((value): value is string => Boolean(value)))]
+        )
+      : new Set<string>();
+    let skippedExistingLogs = 0;
+    let nextDetailIndex = 0;
     progressState.detailRecordsTotal = fetched.records.length;
     await pushProgress("detail_fetch", {
       stageProgress: fetched.records.length === 0 ? 1 : 0,
@@ -1299,77 +1480,97 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
           : `Fetching detail for ${fetched.records.length} discovered record${fetched.records.length === 1 ? "" : "s"}.`
     });
 
-    for (let index = 0; index < fetched.records.length; index += 1) {
-      const entry = fetched.records[index] as Record<string, unknown>;
-      const studentId = listEntryStudentId(entry);
-      const logId = listEntryLogId(entry);
-
-      if (!studentId || !logId) {
-        warnings.push(`sycamore_skipped_entry_missing_ids:${JSON.stringify(entry)}`);
-        progressState.detailRecordsProcessed += 1;
-        continue;
-      }
-
-      let detail: Record<string, unknown>;
-      try {
-        detail = await fetchSycamoreDisciplineLogDetail(studentId, logId, config, dependencies);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown discipline detail error.";
-        warnings.push(`sycamore_detail_fetch_failed:${studentId}:${logId}:${message}`);
-        progressState.detailRecordsProcessed += 1;
-        if (
-          progressState.detailRecordsProcessed === fetched.records.length ||
-          progressState.detailRecordsProcessed === 1 ||
-          progressState.detailRecordsProcessed % 5 === 0
-        ) {
-          await pushProgress("detail_fetch", {
-            stageProgress:
-              fetched.records.length === 0 ? 1 : progressState.detailRecordsProcessed / fetched.records.length,
-            stageDescription: "Loading full discipline detail for each discovered Sycamore record.",
-            message: `Fetched detail for ${progressState.detailRecordsProcessed} of ${fetched.records.length} records.`
-          });
-        }
-        continue;
-      }
-
-      let detentionPayload: Record<string, unknown> | null = null;
-      const detentionId = detailDetentionId(detail, entry);
-      if (detentionId) {
-        try {
-          detentionPayload = await fetchSycamoreDetentionDetail(studentId, detentionId, config, dependencies);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown detention detail error.";
-          warnings.push(`sycamore_detention_fetch_failed:${studentId}:${detentionId}:${message}`);
-        }
-      }
-
-      records.push(
-        mapDisciplineLogRecord({
-          entry,
-          detail,
-          detentionPayload,
-          schoolId: config.schoolId,
-          studentRecordId: studentLinks.get(studentId) ?? null,
-          syncedAt: new Date().toISOString()
-        })
-      );
-      progressState.detailRecordsProcessed += 1;
-
+    const maybePushDetailProgress = async () => {
       if (
-        progressState.detailRecordsProcessed === fetched.records.length ||
-        progressState.detailRecordsProcessed === 1 ||
-        progressState.detailRecordsProcessed % 5 === 0
+        progressState.detailRecordsProcessed !== fetched.records.length &&
+        progressState.detailRecordsProcessed !== 1 &&
+        progressState.detailRecordsProcessed % 5 !== 0
       ) {
-        await pushProgress("detail_fetch", {
-          stageProgress: fetched.records.length === 0 ? 1 : progressState.detailRecordsProcessed / fetched.records.length,
-          stageDescription: "Loading full discipline detail for each discovered Sycamore record.",
-          message: `Fetched detail for ${progressState.detailRecordsProcessed} of ${fetched.records.length} records.`
-        });
+        return;
       }
 
-      if (throttleDelayMs > 0 && index < fetched.records.length - 1) {
-        await sleep(throttleDelayMs);
+      const detailMessage =
+        skippedExistingLogs > 0
+          ? `Processed ${progressState.detailRecordsProcessed} of ${fetched.records.length} records (${skippedExistingLogs} already mirrored).`
+          : `Fetched detail for ${progressState.detailRecordsProcessed} of ${fetched.records.length} records.`;
+      await pushProgress("detail_fetch", {
+        stageProgress: fetched.records.length === 0 ? 1 : progressState.detailRecordsProcessed / fetched.records.length,
+        stageDescription: "Loading full discipline detail for each discovered Sycamore record.",
+        message: detailMessage
+      });
+    };
+
+    const detailWorkerCount = Math.min(detailFetchConcurrency(), Math.max(fetched.records.length, 1));
+    const detailWorkers = Array.from({ length: detailWorkerCount }, async () => {
+      while (true) {
+        const index = nextDetailIndex;
+        nextDetailIndex += 1;
+        if (index >= fetched.records.length) {
+          return;
+        }
+
+        const entry = fetched.records[index] as Record<string, unknown>;
+        const studentId = listEntryStudentId(entry);
+        const logId = listEntryLogId(entry);
+
+        if (!studentId || !logId) {
+          warnings.push(`sycamore_skipped_entry_missing_ids:${JSON.stringify(entry)}`);
+          progressState.detailRecordsProcessed += 1;
+          await maybePushDetailProgress();
+          continue;
+        }
+
+        if (existingLogIds.has(logId)) {
+          skippedExistingLogs += 1;
+          progressState.detailRecordsProcessed += 1;
+          await maybePushDetailProgress();
+          continue;
+        }
+
+        let detail: Record<string, unknown>;
+        try {
+          detail = await fetchSycamoreDisciplineLogDetail(studentId, logId, config, dependencies);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown discipline detail error.";
+          warnings.push(`sycamore_detail_fetch_failed:${studentId}:${logId}:${message}`);
+          progressState.detailRecordsProcessed += 1;
+          await maybePushDetailProgress();
+          continue;
+        }
+
+        let detentionPayload: Record<string, unknown> | null = null;
+        const detentionId = detailDetentionId(detail, entry);
+        if (detentionId) {
+          try {
+            detentionPayload = await fetchSycamoreDetentionDetail(studentId, detentionId, config, dependencies);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown detention detail error.";
+            warnings.push(`sycamore_detention_fetch_failed:${studentId}:${detentionId}:${message}`);
+          }
+        }
+
+        records.push(
+          mapDisciplineLogRecord({
+            entry,
+            detail,
+            detentionPayload,
+            schoolId: config.schoolId,
+            studentRecordId: studentLinks.get(studentId) ?? null,
+            syncedAt: new Date().toISOString()
+          })
+        );
+        progressState.detailRecordsProcessed += 1;
+        await maybePushDetailProgress();
+
+        if (throttleDelayMs > 0 && nextDetailIndex < fetched.records.length) {
+          await sleep(throttleDelayMs);
+        }
       }
+    });
+
+    await Promise.all(detailWorkers);
+    if (skippedExistingLogs > 0) {
+      warnings.push(`sycamore_existing_logs_skipped:${skippedExistingLogs}`);
     }
 
     await pushProgress("upsert", {

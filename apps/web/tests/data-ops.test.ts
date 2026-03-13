@@ -158,6 +158,9 @@ test("buildDataOpsSnapshot exposes ingestion breakdown by source and latest dire
     async backfillDisciplineLogLinks() {
       return 0;
     },
+    async findExistingDisciplineLogIds() {
+      return new Set<string>();
+    },
     async upsertDisciplineLogs() {}
   };
 

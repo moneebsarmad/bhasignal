@@ -137,6 +137,14 @@ function createInMemorySycamoreStore(): {
       }
       return linkedRows;
     },
+    async findExistingDisciplineLogIds(logIds) {
+      const normalizedIds = new Set(logIds.map((value) => value.trim()).filter(Boolean));
+      return new Set(
+        disciplineLogs
+          .map((record) => record.sycamoreLogId)
+          .filter((logId) => normalizedIds.has(logId))
+      );
+    },
     async upsertDisciplineLogs(records) {
       for (const record of records) {
         const existingIndex = disciplineLogs.findIndex((item) => item.sycamoreLogId === record.sycamoreLogId);
@@ -494,6 +502,196 @@ test("runSycamoreDirectSync falls back when school-feed rows are missing resolva
       assert.equal(disciplineLogs[0]?.sycamoreLogId, "log-fallback-1");
       assert.equal(disciplineLogs[0]?.studentRecordId, "stu_local_1");
       assert.equal(disciplineLogs[0]?.studentName, "Jane Doe");
+    }
+  );
+});
+
+test("runSycamoreDirectSync narrows school-feed fallback to candidate students when hint rows fully match roster names", async () => {
+  const { store, disciplineLogs } = createInMemorySycamoreStore();
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY: "1"
+    },
+    async () => {
+      const result = await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.includes("/School/1002/Discipline") && url.includes("Date=2026-03-10")) {
+              return new Response(
+                JSON.stringify({
+                  Data: [
+                    { Student: "Jane Doe", Grade: "8", Date: "2026-03-10", Violation: "Disrespect" }
+                  ]
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/School/1002/Students")) {
+              return new Response(
+                JSON.stringify([
+                  { ID: "stu-ext-1", FirstName: "Jane", LastName: "Doe", Grade: "8" },
+                  { ID: "stu-ext-2", FirstName: "John", LastName: "Smith", Grade: "8" }
+                ]),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline")) {
+              return new Response(JSON.stringify([{ ID: "log-candidate-1", Date: "2026-03-10", Violation: "Disrespect" }]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-2/Discipline")) {
+              throw new Error(`Unexpected non-candidate fetch ${url}`);
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-candidate-1")) {
+              return new Response(
+                JSON.stringify({
+                  ID: "log-candidate-1",
+                  StudentID: "stu-ext-1",
+                  StudentName: "Jane Doe",
+                  Grade: "8",
+                  Violation: "Disrespect",
+                  Resolution: "Lunch detention",
+                  Author: "Dean Smith",
+                  Date: "2026-03-10"
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            throw new Error(`Unexpected URL ${url}`);
+          },
+          sleep: async () => {}
+        }
+      });
+
+      assert.equal(result.status, "success");
+      assert.equal(result.recordsDiscovered, 1);
+      assert.equal(result.recordsUpserted, 1);
+      assert.equal(
+        result.warnings.some((warning) => warning.startsWith("sycamore_school_rows_missing_ids_candidate_fallback_used:")),
+        true
+      );
+      assert.equal(disciplineLogs.length, 1);
+      assert.equal(disciplineLogs[0]?.sycamoreLogId, "log-candidate-1");
+    }
+  );
+});
+
+test("runSycamoreDirectSync skips already mirrored historical logs during manual range reruns", async () => {
+  const { store, disciplineLogs } = createInMemorySycamoreStore();
+  disciplineLogs.push({
+    sycamoreLogId: "log-existing",
+    studentId: "stu-ext-1",
+    studentRecordId: "stu_local_1",
+    studentName: "Jane Doe",
+    grade: "8",
+    schoolId: "1002",
+    incidentDate: "2026-03-10",
+    points: 2,
+    level: null,
+    violation: "Disrespect",
+    violationRaw: "Disrespect",
+    incidentType: "Disrespect",
+    description: "Existing row",
+    resolution: "Lunch detention",
+    consequence: "Lunch detention",
+    authorName: "Dean Smith",
+    authorNameRaw: "Dean Smith",
+    assignedBy: "Dean Smith",
+    quarter: null,
+    createdAtSycamore: null,
+    managerNotified: null,
+    familyNotified: null,
+    studentNotified: null,
+    detentionId: null,
+    rawPayload: {},
+    detentionPayload: null,
+    syncedAt: "2026-03-10T12:00:00.000Z"
+  });
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_SYNC_TODAY: "2026-03-13"
+    },
+    async () => {
+      const result = await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.includes("/School/1002/Discipline") && url.includes("Date=2026-03-10")) {
+              return new Response(
+                JSON.stringify({
+                  Data: [{ LogID: "log-existing", StudentID: "stu-ext-1", StudentName: "Jane Doe", Grade: "8" }]
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/School/1002/Students")) {
+              return new Response(JSON.stringify([{ ID: "stu-ext-1", StudentName: "Jane Doe", Grade: "8" }]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-existing")) {
+              throw new Error(`Detail fetch should have been skipped for ${url}`);
+            }
+            throw new Error(`Unexpected URL ${url}`);
+          },
+          sleep: async () => {}
+        }
+      });
+
+      assert.equal(result.status, "success");
+      assert.equal(result.recordsDiscovered, 1);
+      assert.equal(result.recordsUpserted, 0);
+      assert.equal(
+        result.warnings.some((warning) => warning.startsWith("sycamore_existing_logs_skipped:1")),
+        true
+      );
+      assert.equal(disciplineLogs.length, 1);
     }
   );
 });
