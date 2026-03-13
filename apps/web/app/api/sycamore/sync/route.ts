@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/session";
 import { runSycamoreDirectSync, sycamoreDirectSyncRequestSchema } from "@/lib/sycamore-direct-sync";
 
-export const maxDuration = 600;
+export const maxDuration = 300;
 
 function cronSecret(): string | null {
   const value = process.env.CRON_SECRET?.trim();
