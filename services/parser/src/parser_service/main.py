@@ -5,7 +5,9 @@ from pydantic import BaseModel, Field
 
 from parser_service.pipeline import parse_document
 
-app = FastAPI(title="Signal Parser Service", version="0.3.0")
+PARSER_VERSION = "0.3.0"
+
+app = FastAPI(title="Signal Parser Service", version=PARSER_VERSION)
 
 
 class ParseRequest(BaseModel):
@@ -59,7 +61,7 @@ def parse_pdf(request: ParseRequest) -> ParseResponse:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     return ParseResponse(
-        parser_version="0.3.0",
+        parser_version=PARSER_VERSION,
         parsed_at=now,
         records=records,
         warnings=warnings,

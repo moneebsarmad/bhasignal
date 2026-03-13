@@ -2,7 +2,7 @@ import base64
 
 from fastapi.testclient import TestClient
 
-from parser_service.main import app
+from parser_service.main import PARSER_VERSION, app
 
 
 client = TestClient(app)
@@ -37,7 +37,7 @@ def test_parse_extracts_rows_from_pdf_like_payload() -> None:
     response = client.post("/parse", json=payload)
     assert response.status_code == 200
     body = response.json()
-    assert body["parser_version"] == "0.2.0"
+    assert body["parser_version"] == PARSER_VERSION
     assert len(body["records"]) == 2
     first = body["records"][0]
     assert first["student"]["value"] == "Jane Doe"

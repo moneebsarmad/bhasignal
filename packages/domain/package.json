@@ -8,7 +8,7 @@
   "scripts": {
     "lint": "echo \"No lint config for @syc/domain yet\"",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts"
+    "test": "node --import tsx --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
     "zod": "3.23.8"

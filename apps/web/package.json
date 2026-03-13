@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "smoke:local": "node ./scripts/smoke-local.mjs",
     "preview:pdf": "node ./scripts/preview-pdf-parse.mjs",
     "ingest:pdf": "node ./scripts/ingest-pdf-path.mjs",
