@@ -33,6 +33,18 @@ export interface PageMeta {
   description: string;
 }
 
+function personalizeNavItem(item: NavItem, role: UserRole): NavItem {
+  if (role === "admin" && item.href === "/review") {
+    return {
+      ...item,
+      label: "Exceptions",
+      description: "Fallback PDF review when imported rows need manual correction."
+    };
+  }
+
+  return item;
+}
+
 const allNavItems: NavItem[] = [
   {
     href: "/dashboard",
@@ -99,32 +111,52 @@ const allNavItems: NavItem[] = [
   }
 ];
 
-const navSectionConfig = [
-  {
-    label: "Operations",
-    hrefs: ["/dashboard", "/ingestion", "/review", "/students"]
-  },
-  {
-    label: "Analysis",
-    hrefs: ["/reports"]
-  },
-  {
-    label: "Controls",
-    hrefs: ["/policies", "/notifications", "/data-ops"]
-  },
-  {
-    label: "Governance",
-    hrefs: ["/audit"]
-  }
-] as const;
+const navSectionConfigByRole: Record<UserRole, ReadonlyArray<{ label: string; hrefs: readonly string[] }>> = {
+  admin: [
+    {
+      label: "Operations",
+      hrefs: ["/dashboard", "/ingestion", "/students"]
+    },
+    {
+      label: "Analysis",
+      hrefs: ["/reports"]
+    },
+    {
+      label: "Controls",
+      hrefs: ["/policies", "/notifications", "/data-ops"]
+    },
+    {
+      label: "Governance",
+      hrefs: ["/audit"]
+    },
+    {
+      label: "Exceptions",
+      hrefs: ["/review"]
+    }
+  ],
+  reviewer: [
+    {
+      label: "Operations",
+      hrefs: ["/dashboard", "/ingestion", "/review", "/students"]
+    },
+    {
+      label: "Analysis",
+      hrefs: ["/reports"]
+    },
+    {
+      label: "Governance",
+      hrefs: ["/audit"]
+    }
+  ]
+};
 
 function itemsForRole(role: UserRole): NavItem[] {
-  return allNavItems.filter((item) => item.roles.includes(role));
+  return allNavItems.filter((item) => item.roles.includes(role)).map((item) => personalizeNavItem(item, role));
 }
 
 function sectionsForRole(role: UserRole): NavSection[] {
   const items = itemsForRole(role);
-  return navSectionConfig
+  return navSectionConfigByRole[role]
     .map((section) => ({
       label: section.label,
       items: section.hrefs
@@ -149,8 +181,8 @@ export const pageMetaByPath: Record<string, PageMeta> = {
     description: "Run primary Sycamore syncs, manage fallback PDF imports, and keep intake operations orderly."
   },
   "/review": {
-    title: "Review Workbench",
-    description: "Correct parser ambiguity quickly so policy and notification logic only uses trusted records."
+    title: "Exception Review",
+    description: "Work through fallback-import and other low-confidence records before anything is promoted."
   },
   "/students": {
     title: "Student Profiles",

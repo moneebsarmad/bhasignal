@@ -431,9 +431,9 @@ export function ReviewQueueClient() {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Human review"
-        title="Review the queue in one pass"
-        description="Approve clean rows directly from the table, bulk-approve ready rows, and only open the detail editor for exceptions."
+        eyebrow="Exception workflow"
+        title="Review fallback rows without making it the main intake path"
+        description="Use this queue for fallback PDF parsing and other low-confidence records that need manual correction before promotion."
         actions={
           <Button type="button" variant="secondary" onClick={() => void loadQueue()} disabled={isLoading || isBulkProcessing}>
             <RefreshCcw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
