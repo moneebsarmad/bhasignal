@@ -303,7 +303,7 @@ export function StatCard({
 }: {
   label: string;
   value: ReactNode;
-  description: string;
+  description?: string;
   icon?: LucideIcon;
   href?: string;
   linkLabel?: string;
@@ -316,7 +316,7 @@ export function StatCard({
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-subtle)]">{label}</p>
           <p className="font-display text-4xl text-[var(--color-ink)]">{value}</p>
-          <p className="text-sm leading-6 text-[var(--color-muted)]">{description}</p>
+          {description ? <p className="text-sm leading-6 text-[var(--color-muted)]">{description}</p> : null}
           {href ? (
             <div className="pt-1">
               <Link
@@ -329,7 +329,10 @@ export function StatCard({
           ) : null}
         </div>
         {Icon ? (
-          <div className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-3 text-[var(--color-primary)]">
+          <div
+            title={description}
+            className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-3 text-[var(--color-primary)]"
+          >
             <Icon className="h-5 w-5" />
           </div>
         ) : null}

@@ -414,31 +414,26 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                 <StatCard
                   label="Students tracked"
                   value={data.metrics.studentsTracked}
-                  description="Students with stored discipline points in this operational slice."
                   icon={Users}
                 />
                 <StatCard
                   label="Incidents tracked"
                   value={data.metrics.incidentsTracked}
-                  description="Stored discipline events contributing to current cumulative totals."
                   icon={Siren}
                 />
                 <StatCard
                   label="Total points"
                   value={data.metrics.totalPoints}
-                  description="Cumulative demerit points across students in this live slice."
                   icon={AlertTriangle}
                 />
                 <StatCard
                   label="Students at 10+"
                   value={data.metrics.studentsAt10Plus}
-                  description="Students currently on the parent communication ladder."
                   icon={BellDot}
                 />
                 <StatCard
                   label="Students at 35+"
                   value={data.metrics.studentsAt35Plus}
-                  description="Students in the highest-risk handbook bands."
                   icon={ShieldCheck}
                 />
               </section>
@@ -449,27 +444,18 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                     Open interventions
                   </p>
                   <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.openInterventions}</p>
-                  <p className="text-sm leading-7 text-[var(--color-muted)]">
-                    Current interventions still requiring staff follow-through.
-                  </p>
                 </SoftPanel>
                 <SoftPanel className="space-y-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
                     Queued notifications
                   </p>
                   <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.queuedNotifications}</p>
-                  <p className="text-sm leading-7 text-[var(--color-muted)]">
-                    Notifications waiting for dispatch or manual handling.
-                  </p>
                 </SoftPanel>
                 <SoftPanel className="space-y-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
                     Failed notifications
                   </p>
                   <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.failedNotifications}</p>
-                  <p className="text-sm leading-7 text-[var(--color-muted)]">
-                    Message failures the admin should review before relying on parent contact counts.
-                  </p>
                 </SoftPanel>
               </section>
 
