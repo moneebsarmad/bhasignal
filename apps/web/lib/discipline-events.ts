@@ -29,6 +29,13 @@ export interface DisciplineEventRecord {
   hasSourceConflict: boolean;
 }
 
+export interface DisciplineEventFilters {
+  sourceType?: IngestionSourceType;
+  grade?: string;
+  localStudentId?: string;
+  studentExternalId?: string;
+}
+
 function hasSupabaseServiceRoleEnv(): boolean {
   return Boolean(
     (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL) &&
@@ -175,13 +182,35 @@ function parseDisciplineEventRow(row: Record<string, unknown>): DisciplineEventR
   };
 }
 
-async function listDisciplineEventsFromSupabase(): Promise<DisciplineEventRecord[]> {
+async function listDisciplineEventsFromSupabaseWithFilters(
+  filters?: DisciplineEventFilters
+): Promise<DisciplineEventRecord[]> {
   const client = createSupabaseServerClient();
-  const { data, error } = await client
+  let query = client
     .from("discipline_events")
     .select("*")
     .order("incident_date", { ascending: false, nullsFirst: false })
     .order("source_priority", { ascending: true });
+
+  if (filters?.sourceType) {
+    query = query.eq("source_type", filters.sourceType);
+  }
+
+  if (filters?.grade) {
+    query = query.eq("grade", filters.grade);
+  }
+
+  const localStudentId = toNullableString(filters?.localStudentId);
+  const studentExternalId = toNullableString(filters?.studentExternalId);
+  if (localStudentId && studentExternalId) {
+    query = query.or(`local_student_id.eq.${localStudentId},student_external_id.eq.${studentExternalId}`);
+  } else if (localStudentId) {
+    query = query.eq("local_student_id", localStudentId);
+  } else if (studentExternalId) {
+    query = query.eq("student_external_id", studentExternalId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(
@@ -197,7 +226,8 @@ async function listDisciplineEventsFromStorage(
   input?: {
     approvedIncidents?: ApprovedIncident[];
     students?: Student[];
-  }
+  },
+  filters?: DisciplineEventFilters
 ): Promise<DisciplineEventRecord[]> {
   const [approvedIncidents, students] = await Promise.all([
     input?.approvedIncidents ? Promise.resolve(input.approvedIncidents) : storage.approvedIncidents.list(),
@@ -256,7 +286,32 @@ async function listDisciplineEventsFromStorage(
     (event) => !sycamoreEvents.some((sycamoreEvent) => disciplineEventsMatch(sycamoreEvent, event))
   );
 
-  return [...sycamoreEvents, ...fallbackPdfEvents].sort((left, right) => {
+  const mergedEvents = [...sycamoreEvents, ...fallbackPdfEvents].filter((event) => {
+    if (filters?.sourceType && event.sourceType !== filters.sourceType) {
+      return false;
+    }
+
+    if (filters?.grade) {
+      const eventGrade = toNullableString(event.grade);
+      if (eventGrade !== filters.grade) {
+        return false;
+      }
+    }
+
+    const localStudentId = toNullableString(filters?.localStudentId);
+    const studentExternalId = toNullableString(filters?.studentExternalId);
+    if (localStudentId || studentExternalId) {
+      const matchesLocalStudent = Boolean(localStudentId && event.localStudentId === localStudentId);
+      const matchesExternalStudent = Boolean(studentExternalId && event.studentExternalId === studentExternalId);
+      if (!matchesLocalStudent && !matchesExternalStudent) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  return mergedEvents.sort((left, right) => {
     const dateComparison = (right.incidentDate ?? "").localeCompare(left.incidentDate ?? "");
     if (dateComparison !== 0) {
       return dateComparison;
@@ -275,11 +330,12 @@ export async function listDisciplineEvents(
   input?: {
     approvedIncidents?: ApprovedIncident[];
     students?: Student[];
-  }
+  },
+  filters?: DisciplineEventFilters
 ): Promise<DisciplineEventRecord[]> {
   if (hasSupabaseServiceRoleEnv()) {
-    return listDisciplineEventsFromSupabase();
+    return listDisciplineEventsFromSupabaseWithFilters(filters);
   }
 
-  return listDisciplineEventsFromStorage(storage, input);
+  return listDisciplineEventsFromStorage(storage, input, filters);
 }

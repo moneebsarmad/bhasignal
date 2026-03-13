@@ -21,6 +21,7 @@ interface StudentRow {
   fullName: string;
   grade: string;
   totalPoints: number;
+  incidentCount: number;
   interventionCount: number;
   lastIncidentAt: string | null;
 }
@@ -35,10 +36,16 @@ interface StudentDetail {
   incidents: Array<{
     id: string;
     occurredAt: string;
+    incidentDate: string | null;
     points: number;
     reason: string;
     comment: string;
     teacherName: string;
+    authorName: string | null;
+    resolution: string | null;
+    sourceType: "manual_pdf" | "sycamore_api";
+    level: number | null;
+    violation: string | null;
   }>;
   interventions: Array<{
     id: string;
@@ -186,8 +193,8 @@ export function StudentsClient() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Student tracking"
-        title="Search students and inspect intervention history"
-        description="Use the list on the left to jump between students, then work through incidents, interventions, notifications, and audit context without losing place."
+        title="Search students and inspect synced discipline history"
+        description="Use the list on the left to move between student profiles, then review their Sycamore-backed incident timeline alongside interventions, notifications, and audit context."
         actions={
           <Button type="button" variant="secondary" onClick={() => void loadStudents()} disabled={isLoading}>
             <RefreshCcw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
@@ -209,7 +216,7 @@ export function StudentsClient() {
             <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Find the right student fast</h2>
           </div>
           <p className="max-w-xl text-sm leading-7 text-[var(--color-muted)]">
-            Filter by name or grade, then use the profile workspace to understand history and act on intervention state.
+            Filter by name or grade, then inspect the synced discipline timeline before moving into intervention state and follow-up history.
           </p>
         </div>
 
@@ -271,7 +278,7 @@ export function StudentsClient() {
                       </StatusBadge>
                     </div>
                     <p className="text-sm leading-6 text-[var(--color-muted)]">
-                      {student.interventionCount} interventions
+                      {student.incidentCount} incidents • {student.interventionCount} interventions
                       {student.lastIncidentAt ? ` • last incident ${new Date(student.lastIncidentAt).toLocaleDateString()}` : ""}
                     </p>
                   </button>
@@ -329,7 +336,7 @@ export function StudentsClient() {
                     <p className="text-sm font-semibold text-[var(--color-ink)]">Incidents</p>
                   </div>
                   <p className="font-display text-3xl text-[var(--color-ink)]">{detail.incidents.length}</p>
-                  <p className="text-sm leading-7 text-[var(--color-muted)]">Recent merits and demerits attached to this student timeline.</p>
+                  <p className="text-sm leading-7 text-[var(--color-muted)]">Synced discipline events attached to this student timeline.</p>
                 </SoftPanel>
                 <SoftPanel className="space-y-3">
                   <div className="flex items-center gap-3">
@@ -381,7 +388,7 @@ export function StudentsClient() {
                   {detail.incidents.length === 0 ? (
                     <EmptyState
                       title="No incidents recorded"
-                      description="This student does not currently have any incidents in the selected data set."
+                      description="This student does not currently have any synced Sycamore incidents in the active dataset."
                     />
                   ) : (
                     detail.incidents.slice(0, 10).map((incident) => (
@@ -390,13 +397,23 @@ export function StudentsClient() {
                           <div>
                             <p className="font-semibold text-[var(--color-ink)]">{incident.reason}</p>
                             <p className="mt-1 text-sm text-[var(--color-muted)]">
-                              {new Date(incident.occurredAt).toLocaleString()} • {incident.teacherName || "Unknown teacher"}
+                              {new Date(incident.occurredAt).toLocaleString()} •{" "}
+                              {incident.authorName || incident.teacherName || "Unknown staff"}
+                              {incident.level !== null ? ` • Level ${incident.level}` : ""}
                             </p>
                           </div>
                           <StatusBadge tone={incident.points > 0 ? "warning" : "neutral"}>{incident.points} pts</StatusBadge>
                         </div>
+                        {incident.violation && incident.violation !== incident.reason ? (
+                          <p className="text-sm leading-7 text-[var(--color-muted)]">{incident.violation}</p>
+                        ) : null}
                         {incident.comment ? (
                           <p className="text-sm leading-7 text-[var(--color-muted)]">{incident.comment}</p>
+                        ) : null}
+                        {incident.resolution ? (
+                          <p className="text-sm leading-7 text-[var(--color-muted)]">
+                            Resolution: {incident.resolution}
+                          </p>
                         ) : null}
                       </SoftPanel>
                     ))
