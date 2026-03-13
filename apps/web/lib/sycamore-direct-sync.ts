@@ -112,6 +112,36 @@ export interface SycamoreDirectSyncResult {
   triggeredBy: string;
 }
 
+export type SycamoreSyncStage = "roster" | "discovery" | "detail_fetch" | "upsert" | "complete" | "failed";
+type SycamoreActiveSyncStage = Exclude<SycamoreSyncStage, "complete" | "failed">;
+
+export interface SycamoreSyncProgressSnapshot {
+  syncLogId: string;
+  syncMode: SycamoreSyncMode;
+  window: {
+    startDate: string;
+    endDate: string;
+  };
+  startedAt: string;
+  updatedAt: string;
+  stage: SycamoreSyncStage;
+  stageIndex: number;
+  stageCount: number;
+  stageLabel: string;
+  stageDescription: string;
+  stageProgress: number | null;
+  overallProgress: number;
+  rosterStudentsFetched: number;
+  rosterStudentsUpserted: number;
+  rosterStudentsLinked: number;
+  discoveredRecords: number;
+  detailRecordsProcessed: number;
+  detailRecordsTotal: number;
+  recordsUpserted: number;
+  warningsCount: number;
+  message: string;
+}
+
 export interface SycamoreDashboardSummary {
   configured: boolean;
   error?: string;
@@ -184,6 +214,7 @@ interface RunSycamoreDirectSyncInput {
   storage?: AppStorageAdapter;
   config?: SycamoreClientConfig;
   dependencies?: SycamoreClientDependencies;
+  onProgress?: (snapshot: SycamoreSyncProgressSnapshot) => void | Promise<void>;
 }
 
 export interface SycamoreRosterSyncResult {
@@ -194,6 +225,14 @@ export interface SycamoreRosterSyncResult {
   linkedDisciplineLogs: number;
   warnings: string[];
 }
+
+const SYNC_STAGE_ORDER: SycamoreActiveSyncStage[] = ["roster", "discovery", "detail_fetch", "upsert"];
+const SYNC_STAGE_WEIGHTS: Record<SycamoreActiveSyncStage, number> = {
+  roster: 0.16,
+  discovery: 0.18,
+  detail_fetch: 0.56,
+  upsert: 0.1
+};
 
 function normalizeLookupValue(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -691,6 +730,68 @@ function baseDashboardSummary(): SycamoreDashboardSummary {
   };
 }
 
+function clampProgress(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, value));
+}
+
+function stageIndex(stage: SycamoreSyncStage): number {
+  if (stage === "complete" || stage === "failed") {
+    return SYNC_STAGE_ORDER.length;
+  }
+
+  const index = SYNC_STAGE_ORDER.indexOf(stage);
+  return index >= 0 ? index : 0;
+}
+
+function overallProgressForStage(stage: SycamoreSyncStage, stageProgress: number | null): number {
+  if (stage === "complete") {
+    return 1;
+  }
+
+  const completedWeight = SYNC_STAGE_ORDER.slice(0, stageIndex(stage)).reduce(
+    (sum, key) => sum + SYNC_STAGE_WEIGHTS[key],
+    0
+  );
+
+  if (stage === "failed") {
+    return clampProgress(completedWeight);
+  }
+
+  const currentWeight = SYNC_STAGE_WEIGHTS[stage as SycamoreActiveSyncStage] ?? 0;
+  const normalizedStageProgress = stageProgress === null ? 0 : clampProgress(stageProgress);
+  return clampProgress(completedWeight + currentWeight * normalizedStageProgress);
+}
+
+function stageLabel(stage: SycamoreSyncStage): string {
+  switch (stage) {
+    case "roster":
+      return "Roster";
+    case "discovery":
+      return "Discovery";
+    case "detail_fetch":
+      return "Detail fetch";
+    case "upsert":
+      return "Upsert";
+    case "complete":
+      return "Complete";
+    case "failed":
+      return "Failed";
+  }
+}
+
+async function emitSycamoreSyncProgress(
+  callback: RunSycamoreDirectSyncInput["onProgress"],
+  snapshot: SycamoreSyncProgressSnapshot
+): Promise<void> {
+  if (!callback) {
+    return;
+  }
+  await callback(snapshot);
+}
+
 async function resolveSyncPlan(store: SycamoreStore, request: SycamoreDirectSyncRequest): Promise<DirectSyncPlan> {
   if (request.startDate && request.endDate) {
     return {
@@ -848,22 +949,101 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
     windowEndDate: plan.window.endDate
   });
 
+  const progressState = {
+    rosterStudentsFetched: 0,
+    rosterStudentsUpserted: 0,
+    rosterStudentsLinked: 0,
+    discoveredRecords: 0,
+    detailRecordsProcessed: 0,
+    detailRecordsTotal: 0,
+    recordsUpserted: 0,
+    warningsCount: 0
+  };
+
+  const pushProgress = async (
+    stage: SycamoreSyncStage,
+    inputStage: {
+      stageProgress: number | null;
+      stageDescription: string;
+      message: string;
+    }
+  ) => {
+    progressState.warningsCount = warnings.length;
+
+    await emitSycamoreSyncProgress(input.onProgress, {
+      syncLogId: syncLog.id,
+      syncMode: plan.syncMode,
+      window: plan.window,
+      startedAt: syncLog.startedAt,
+      updatedAt: new Date().toISOString(),
+      stage,
+      stageIndex: stageIndex(stage),
+      stageCount: SYNC_STAGE_ORDER.length,
+      stageLabel: stageLabel(stage),
+      stageDescription: inputStage.stageDescription,
+      stageProgress: inputStage.stageProgress,
+      overallProgress: overallProgressForStage(stage, inputStage.stageProgress),
+      rosterStudentsFetched: progressState.rosterStudentsFetched,
+      rosterStudentsUpserted: progressState.rosterStudentsUpserted,
+      rosterStudentsLinked: progressState.rosterStudentsLinked,
+      discoveredRecords: progressState.discoveredRecords,
+      detailRecordsProcessed: progressState.detailRecordsProcessed,
+      detailRecordsTotal: progressState.detailRecordsTotal,
+      recordsUpserted: progressState.recordsUpserted,
+      warningsCount: progressState.warningsCount,
+      message: inputStage.message
+    });
+  };
+
   const warnings: string[] = [];
+  await pushProgress("roster", {
+    stageProgress: 0,
+    stageDescription: "Refreshing the Sycamore roster and linking students before discipline import begins.",
+    message: "Starting roster preparation."
+  });
   const rosterSync = await syncSycamoreRosterLinks({
     storage,
     store,
     config,
     dependencies
   });
+  progressState.rosterStudentsFetched = rosterSync.fetchedStudents;
+  progressState.rosterStudentsUpserted = rosterSync.upsertedStudents;
+  progressState.rosterStudentsLinked = rosterSync.linkedStudents;
   warnings.push(...rosterSync.warnings);
+  await pushProgress("roster", {
+    stageProgress: 1,
+    stageDescription: "Refreshing the Sycamore roster and linking students before discipline import begins.",
+    message: `Roster ready: ${rosterSync.upsertedStudents} students refreshed, ${rosterSync.linkedStudents} linked locally.`
+  });
 
   try {
+    await pushProgress("discovery", {
+      stageProgress: null,
+      stageDescription: "Collecting the set of discipline records that match this sync window.",
+      message: "Discovering discipline records in Sycamore."
+    });
     const fetched = await discoverDisciplineEntries(plan.window, config, dependencies, sleep, throttleDelayMs, studentTargets);
     warnings.push(...fetched.warnings);
+    progressState.discoveredRecords = fetched.records.length;
+    await pushProgress("discovery", {
+      stageProgress: 1,
+      stageDescription: "Collecting the set of discipline records that match this sync window.",
+      message: `Discovery complete: ${fetched.records.length} record${fetched.records.length === 1 ? "" : "s"} found.`
+    });
 
     const uniqueStudentIds = [...new Set(fetched.records.map(listEntryStudentId).filter((value): value is string => Boolean(value)))];
     const studentLinks = await store.resolveStudentRecordLinks(uniqueStudentIds);
     const records: SycamoreDisciplineLogRecord[] = [];
+    progressState.detailRecordsTotal = fetched.records.length;
+    await pushProgress("detail_fetch", {
+      stageProgress: fetched.records.length === 0 ? 1 : 0,
+      stageDescription: "Loading full discipline detail for each discovered Sycamore record.",
+      message:
+        fetched.records.length === 0
+          ? "No record details needed for this sync window."
+          : `Fetching detail for ${fetched.records.length} discovered record${fetched.records.length === 1 ? "" : "s"}.`
+    });
 
     for (let index = 0; index < fetched.records.length; index += 1) {
       const entry = fetched.records[index] as Record<string, unknown>;
@@ -872,6 +1052,7 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
 
       if (!studentId || !logId) {
         warnings.push(`sycamore_skipped_entry_missing_ids:${JSON.stringify(entry)}`);
+        progressState.detailRecordsProcessed += 1;
         continue;
       }
 
@@ -881,6 +1062,19 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown discipline detail error.";
         warnings.push(`sycamore_detail_fetch_failed:${studentId}:${logId}:${message}`);
+        progressState.detailRecordsProcessed += 1;
+        if (
+          progressState.detailRecordsProcessed === fetched.records.length ||
+          progressState.detailRecordsProcessed === 1 ||
+          progressState.detailRecordsProcessed % 5 === 0
+        ) {
+          await pushProgress("detail_fetch", {
+            stageProgress:
+              fetched.records.length === 0 ? 1 : progressState.detailRecordsProcessed / fetched.records.length,
+            stageDescription: "Loading full discipline detail for each discovered Sycamore record.",
+            message: `Fetched detail for ${progressState.detailRecordsProcessed} of ${fetched.records.length} records.`
+          });
+        }
         continue;
       }
 
@@ -905,13 +1099,40 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
           syncedAt: new Date().toISOString()
         })
       );
+      progressState.detailRecordsProcessed += 1;
+
+      if (
+        progressState.detailRecordsProcessed === fetched.records.length ||
+        progressState.detailRecordsProcessed === 1 ||
+        progressState.detailRecordsProcessed % 5 === 0
+      ) {
+        await pushProgress("detail_fetch", {
+          stageProgress: fetched.records.length === 0 ? 1 : progressState.detailRecordsProcessed / fetched.records.length,
+          stageDescription: "Loading full discipline detail for each discovered Sycamore record.",
+          message: `Fetched detail for ${progressState.detailRecordsProcessed} of ${fetched.records.length} records.`
+        });
+      }
 
       if (throttleDelayMs > 0 && index < fetched.records.length - 1) {
         await sleep(throttleDelayMs);
       }
     }
 
+    await pushProgress("upsert", {
+      stageProgress: records.length === 0 ? 1 : 0,
+      stageDescription: "Writing the normalized Sycamore records into the mirrored Supabase table.",
+      message:
+        records.length === 0
+          ? "No rows needed to be written for this sync."
+          : `Writing ${records.length} normalized record${records.length === 1 ? "" : "s"} to Supabase.`
+    });
     await store.upsertDisciplineLogs(records);
+    progressState.recordsUpserted = records.length;
+    await pushProgress("upsert", {
+      stageProgress: 1,
+      stageDescription: "Writing the normalized Sycamore records into the mirrored Supabase table.",
+      message: `Upsert complete: ${records.length} row${records.length === 1 ? "" : "s"} written.`
+    });
 
     const blockingWarnings = warnings.filter((warning) => !isNonBlockingWarning(warning));
     const status: SycamoreSyncStatus =
@@ -926,6 +1147,15 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
       recordsSynced: records.length,
       recordsUpserted: records.length,
       errorMessage: warningSummary
+    });
+
+    await pushProgress("complete", {
+      stageProgress: 1,
+      stageDescription: status === "partial" ? "The sync completed with warnings." : "The sync completed successfully.",
+      message:
+        status === "partial"
+          ? `Sync completed with warnings. ${records.length} row${records.length === 1 ? "" : "s"} stored.`
+          : `Sync completed successfully. ${records.length} row${records.length === 1 ? "" : "s"} stored.`
     });
 
     return {
@@ -950,6 +1180,11 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Sycamore sync failure.";
     const completedAt = new Date().toISOString();
+    await pushProgress("failed", {
+      stageProgress: null,
+      stageDescription: "The sync stopped before completion.",
+      message
+    });
 
     await store.updateSyncLog(syncLog.id, {
       completedAt,

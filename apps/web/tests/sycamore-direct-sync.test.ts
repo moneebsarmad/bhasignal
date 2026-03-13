@@ -5,7 +5,8 @@ import {
   backfillSycamoreStudentLinks,
   runSycamoreDirectSync,
   sycamoreDirectSyncRequestSchema,
-  type SycamoreDirectSyncRequest
+  type SycamoreDirectSyncRequest,
+  type SycamoreSyncProgressSnapshot
 } from "../lib/sycamore-direct-sync";
 import type {
   SycamoreDisciplineLogRecord,
@@ -244,6 +245,91 @@ test("runSycamoreDirectSync fetches school list, detail rows, and linked detenti
       assert.equal(disciplineLogs[0]?.detentionPayload?.Location, "Room 14");
     }
   );
+});
+
+test("runSycamoreDirectSync emits stage progress snapshots for manual syncs", async () => {
+  const { store } = createInMemorySycamoreStore();
+  const progressSnapshots: SycamoreSyncProgressSnapshot[] = [];
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0"
+    },
+    async () => {
+      await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        onProgress(snapshot) {
+          progressSnapshots.push(snapshot);
+        },
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.endsWith("/School/1002/Students")) {
+              return new Response(JSON.stringify({ Data: [{ ID: "stu-ext-1", StudentName: "Jane Doe", Grade: "8" }] }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.includes("/School/1002/Discipline") && url.includes("Date=2026-03-10")) {
+              return new Response(
+                JSON.stringify({
+                  Data: [{ LogID: "log-1", StudentID: "stu-ext-1", StudentName: "Jane Doe", Grade: "8" }]
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-1")) {
+              return new Response(
+                JSON.stringify({
+                  Data: {
+                    LogID: "log-1",
+                    StudentID: "stu-ext-1",
+                    StudentName: "Jane Doe",
+                    Grade: "8",
+                    Type: "Disrespect",
+                    Description: "Classroom disruption",
+                    Resolution: "Lunch detention",
+                    Author: "Ms Smith",
+                    Date: "03/10/2026"
+                  }
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+
+            throw new Error(`Unexpected url ${url}`);
+          }
+        }
+      });
+    }
+  );
+
+  assert.ok(progressSnapshots.length >= 5);
+  assert.equal(progressSnapshots[0]?.stage, "roster");
+  assert.ok(progressSnapshots.some((snapshot) => snapshot.stage === "discovery"));
+  assert.ok(progressSnapshots.some((snapshot) => snapshot.stage === "detail_fetch"));
+  assert.ok(progressSnapshots.some((snapshot) => snapshot.stage === "upsert"));
+  assert.equal(progressSnapshots.at(-1)?.stage, "complete");
+  assert.equal(progressSnapshots.at(-1)?.recordsUpserted, 1);
+  assert.equal(progressSnapshots.at(-1)?.detailRecordsProcessed, 1);
 });
 
 test("runSycamoreDirectSync falls back to per-student discipline discovery when the school feed is empty", async () => {

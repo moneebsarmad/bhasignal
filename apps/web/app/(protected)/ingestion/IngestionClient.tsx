@@ -60,6 +60,48 @@ interface JobActionResponse {
   error?: string;
 }
 
+interface SycamoreSyncProgressSnapshot {
+  syncLogId: string;
+  syncMode: "initial_backfill" | "manual_range" | "incremental";
+  window: {
+    startDate: string;
+    endDate: string;
+  };
+  startedAt: string;
+  updatedAt: string;
+  stage: "roster" | "discovery" | "detail_fetch" | "upsert" | "complete" | "failed";
+  stageIndex: number;
+  stageCount: number;
+  stageLabel: string;
+  stageDescription: string;
+  stageProgress: number | null;
+  overallProgress: number;
+  rosterStudentsFetched: number;
+  rosterStudentsUpserted: number;
+  rosterStudentsLinked: number;
+  discoveredRecords: number;
+  detailRecordsProcessed: number;
+  detailRecordsTotal: number;
+  recordsUpserted: number;
+  warningsCount: number;
+  message: string;
+}
+
+type SycamoreSyncStreamLine =
+  | {
+      type: "progress";
+      progress: SycamoreSyncProgressSnapshot;
+    }
+  | {
+      type: "result";
+      sycamoreSync: NonNullable<JobActionResponse["sycamoreSync"]>;
+    }
+  | {
+      type: "error";
+      error: string;
+      status?: number;
+    };
+
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -135,6 +177,48 @@ function parseStudentNamesInput(value: string): string[] {
   return [...new Set(value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean))];
 }
 
+const syncStageKeys = ["roster", "discovery", "detail_fetch", "upsert"] as const;
+
+function formatDuration(startedAt: string, nowValue: number): string {
+  const elapsedMs = Math.max(0, nowValue - Date.parse(startedAt));
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function syncStageSubtitle(progress: SycamoreSyncProgressSnapshot, stage: (typeof syncStageKeys)[number]): string {
+  switch (stage) {
+    case "roster":
+      return progress.rosterStudentsUpserted > 0
+        ? `${progress.rosterStudentsUpserted} students refreshed`
+        : "Preparing student links";
+    case "discovery":
+      return progress.discoveredRecords > 0 ? `${progress.discoveredRecords} records found` : "Finding matching incidents";
+    case "detail_fetch":
+      return progress.detailRecordsTotal > 0
+        ? `${progress.detailRecordsProcessed} of ${progress.detailRecordsTotal} detailed`
+        : "Waiting for discovered records";
+    case "upsert":
+      return progress.recordsUpserted > 0 ? `${progress.recordsUpserted} rows written` : "Waiting to write normalized rows";
+  }
+}
+
+function parseNdjsonLines(input: string): { events: SycamoreSyncStreamLine[]; remainder: string } {
+  const lines = input.split("\n");
+  const remainder = lines.pop() ?? "";
+  const events: SycamoreSyncStreamLine[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const parsed = JSON.parse(trimmed) as SycamoreSyncStreamLine;
+    events.push(parsed);
+  }
+  return { events, remainder };
+}
+
 export function IngestionClient() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [jobs, setJobs] = useState<ParseRun[]>([]);
@@ -147,6 +231,8 @@ export function IngestionClient() {
   const [syncGrade, setSyncGrade] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<JobActionResponse | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SycamoreSyncProgressSnapshot | null>(null);
+  const [syncNow, setSyncNow] = useState(() => Date.now());
   const [isDragActive, setIsDragActive] = useState(false);
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -227,6 +313,18 @@ export function IngestionClient() {
     void loadJobs();
   }, []);
 
+  useEffect(() => {
+    if (!isSyncing || !syncProgress) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setSyncNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [isSyncing, syncProgress]);
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (selectedFiles.length === 0) {
@@ -272,21 +370,65 @@ export function IngestionClient() {
     setIsSyncing(true);
     setError(null);
     setLastResult(null);
+    setSyncProgress(null);
+    setSyncNow(Date.now());
 
     try {
-      const response = await fetch("/api/sycamore/sync", {
+      const response = await fetch("/api/sycamore/sync/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
 
-      const body = (await response.json().catch(() => null)) as JobActionResponse | null;
       if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as JobActionResponse | null;
         setError(body?.error || "Sycamore sync failed.");
         return;
       }
 
-      setLastResult(body);
+      if (!response.body) {
+        setError("Sycamore sync started but no progress stream was returned.");
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          buffer += decoder.decode();
+          const trailing = buffer.trim();
+          if (trailing) {
+            const parsed = JSON.parse(trailing) as SycamoreSyncStreamLine;
+            if (parsed.type === "progress") {
+              setSyncProgress(parsed.progress);
+            } else if (parsed.type === "result") {
+              setLastResult({ sycamoreSync: parsed.sycamoreSync });
+            } else if (parsed.type === "error") {
+              setError(parsed.error || "Sycamore sync failed.");
+            }
+          }
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const parsed = parseNdjsonLines(buffer);
+        buffer = parsed.remainder;
+
+        for (const event of parsed.events) {
+          if (event.type === "progress") {
+            setSyncProgress(event.progress);
+            continue;
+          }
+          if (event.type === "result") {
+            setLastResult({ sycamoreSync: event.sycamoreSync });
+            continue;
+          }
+          setError(event.error || "Sycamore sync failed.");
+        }
+      }
     } catch (error) {
       setError(getErrorMessage(error, "Sycamore sync failed."));
     } finally {
@@ -364,6 +506,7 @@ export function IngestionClient() {
   const parsedSyncStudentNames = useMemo(() => parseStudentNamesInput(syncStudentNamesText), [syncStudentNamesText]);
   const hasTargetedSyncFilters = parsedSyncStudentNames.length > 0 || Boolean(syncGrade);
   const flaggedRows = jobs.reduce((total, job) => total + job.rowsFlagged, 0);
+  const syncElapsed = syncProgress ? formatDuration(syncProgress.startedAt, syncNow) : null;
 
   return (
     <div className="space-y-6">
@@ -459,6 +602,150 @@ export function IngestionClient() {
                 </div>
               </div>
             </form>
+
+            {syncProgress ? (
+              <SoftPanel className="space-y-5 border-white/70 bg-white/88">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
+                      Sync progress
+                    </p>
+                    <div className="space-y-1">
+                      <h3 className="font-display text-2xl text-[var(--color-ink)]">{syncProgress.stageLabel}</h3>
+                      <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
+                        {syncProgress.stageDescription}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <StatusBadge
+                      tone={
+                        syncProgress.stage === "failed"
+                          ? "danger"
+                          : syncProgress.stage === "complete"
+                            ? "success"
+                            : "info"
+                      }
+                    >
+                      {syncProgress.stage === "complete"
+                        ? "Completed"
+                        : syncProgress.stage === "failed"
+                          ? "Failed"
+                          : "Running"}
+                    </StatusBadge>
+                    {syncElapsed ? <StatusBadge tone="neutral">{syncElapsed} elapsed</StatusBadge> : null}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="h-2 overflow-hidden rounded-full bg-[var(--color-soft-surface)]">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all duration-500",
+                        syncProgress.stage === "failed" ? "bg-[var(--color-danger)]" : "bg-[var(--color-primary)]"
+                      )}
+                      style={{ width: `${Math.max(8, Math.round(syncProgress.overallProgress * 100))}%` }}
+                    />
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-4">
+                    {syncStageKeys.map((stageKey, index) => {
+                      const isComplete =
+                        syncProgress.stage === "complete" ||
+                        (syncProgress.stage !== "failed" && index < syncProgress.stageIndex);
+                      const isCurrent = syncProgress.stage === stageKey;
+                      const fill = isComplete ? 1 : isCurrent ? (syncProgress.stageProgress ?? 0.42) : 0;
+
+                      return (
+                        <div key={stageKey} className="space-y-2">
+                          <div className="h-2 overflow-hidden rounded-full bg-[var(--color-soft-surface)]">
+                            <div
+                              className={cn(
+                                "h-full rounded-full transition-all duration-500",
+                                isComplete || isCurrent
+                                  ? syncProgress.stage === "failed" && isCurrent
+                                    ? "bg-[var(--color-danger)]"
+                                    : "bg-[var(--color-primary)]"
+                                  : "bg-transparent",
+                                isCurrent && syncProgress.stageProgress === null ? "animate-pulse" : ""
+                              )}
+                              style={{ width: `${Math.round(fill * 100)}%` }}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold text-[var(--color-ink)]">
+                              {stageKey === "roster"
+                                ? "Roster"
+                                : stageKey === "discovery"
+                                  ? "Discovery"
+                                  : stageKey === "detail_fetch"
+                                    ? "Detail fetch"
+                                    : "Upsert"}
+                            </p>
+                            <p className="text-xs leading-6 text-[var(--color-muted)]">
+                              {syncStageSubtitle(syncProgress, stageKey)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-4">
+                  <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Roster
+                    </p>
+                    <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
+                      {syncProgress.rosterStudentsUpserted}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {syncProgress.rosterStudentsFetched > 0
+                        ? `${syncProgress.rosterStudentsFetched} students fetched`
+                        : "Waiting for roster scan"}
+                    </p>
+                  </div>
+                  <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Discovery
+                    </p>
+                    <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
+                      {syncProgress.discoveredRecords}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">Incidents found in the selected window</p>
+                  </div>
+                  <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Detail fetch
+                    </p>
+                    <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
+                      {syncProgress.detailRecordsProcessed}
+                      {syncProgress.detailRecordsTotal > 0 ? ` / ${syncProgress.detailRecordsTotal}` : ""}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {syncProgress.detailRecordsTotal > 0
+                        ? `${Math.max(syncProgress.detailRecordsTotal - syncProgress.detailRecordsProcessed, 0)} left`
+                        : "Waiting for detail stage"}
+                    </p>
+                  </div>
+                  <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Upsert
+                    </p>
+                    <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">{syncProgress.recordsUpserted}</p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {syncProgress.warningsCount > 0
+                        ? `${syncProgress.warningsCount} warning${syncProgress.warningsCount === 1 ? "" : "s"}`
+                        : "No warnings so far"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-[1.3rem] border border-dashed border-[var(--color-line)] bg-[var(--color-panel)] px-4 py-3 text-sm leading-7 text-[var(--color-muted)]">
+                  {syncProgress.message}
+                </div>
+              </SoftPanel>
+            ) : null}
           </Panel>
 
           <Panel className="space-y-5">
