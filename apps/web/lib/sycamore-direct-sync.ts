@@ -265,6 +265,16 @@ const SYCAMORE_STUDENT_ID_KEYS = [
   "StudentNumber",
   "studentNumber"
 ] as const;
+const SYCAMORE_STUDENT_CODE_KEYS = [
+  "StudentCode",
+  "studentCode",
+  "student_code",
+  "Code",
+  "code",
+  "ExternalID",
+  "ExternalId",
+  "externalId"
+] as const;
 const SYCAMORE_STUDENT_NAME_KEYS = [
   "Student",
   "StudentName",
@@ -543,17 +553,29 @@ function isRosterSyncEnabled(): boolean {
 }
 
 function studentFallbackDiscoveryConcurrency(): number {
-  return Math.min(envNumber("SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY", 4, 1), 12);
+  return Math.min(envNumber("SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY", 8, 1), 12);
 }
 
 function detailFetchConcurrency(): number {
-  return Math.min(envNumber("SYCAMORE_DETAIL_FETCH_CONCURRENCY", 4, 1), 12);
+  return Math.min(envNumber("SYCAMORE_DETAIL_FETCH_CONCURRENCY", 8, 1), 12);
+}
+
+type SycamoreDiscoveryStrategy = "student_overview" | "school_feed" | "auto";
+
+function sycamoreDiscoveryStrategy(): SycamoreDiscoveryStrategy {
+  const raw = (process.env.SYCAMORE_DISCOVERY_STRATEGY ?? "student_overview").trim().toLowerCase();
+  if (raw === "school_feed" || raw === "auto") {
+    return raw;
+  }
+  return "student_overview";
 }
 
 function isNonBlockingWarning(warning: string): boolean {
   return (
     warning.startsWith("sycamore_no_records:") ||
+    warning.startsWith("sycamore_student_overview_discovery_used:") ||
     warning.startsWith("sycamore_school_list_empty_fallback_used:") ||
+    warning.startsWith("sycamore_school_rows_out_of_window_skipped:") ||
     warning.startsWith("sycamore_school_rows_missing_ids_fallback_used:") ||
     warning.startsWith("sycamore_school_rows_missing_ids_candidate_fallback_used:") ||
     warning.startsWith("sycamore_existing_logs_skipped:") ||
@@ -569,8 +591,16 @@ function listEntryStudentId(entry: Record<string, unknown>): string | null {
   return trimText(pickFirst(entry, [...SYCAMORE_STUDENT_ID_KEYS]));
 }
 
+function listEntryStudentCode(entry: Record<string, unknown>): string | null {
+  return trimText(pickFirst(entry, [...SYCAMORE_STUDENT_CODE_KEYS]));
+}
+
 function rosterStudentId(student: Record<string, unknown>): string | null {
   return trimText(pickFirst(student, ["ID", "Id", "id", ...SYCAMORE_STUDENT_ID_KEYS]));
+}
+
+function rosterStudentCode(student: Record<string, unknown>): string | null {
+  return trimText(pickFirst(student, [...SYCAMORE_STUDENT_CODE_KEYS]));
 }
 
 function rosterStudentName(student: Record<string, unknown>): string | null {
@@ -612,7 +642,7 @@ interface StudentFallbackDiscoveryProgress {
   processedStudents: number;
   totalStudents: number;
   discoveredRecords: number;
-  reason: "school_empty" | "school_rows_missing_ids" | "school_hint_candidates" | "targeted";
+  reason: "school_empty" | "school_rows_missing_ids" | "school_hint_candidates" | "targeted" | "full_student_discovery";
 }
 
 interface SchoolHintFallbackTargets {
@@ -636,11 +666,17 @@ function resolveSchoolHintFallbackTargets(
   }
 
   const rosterById = new Map<string, Record<string, unknown>>();
+  const rosterByStudentCode = new Map<string, Record<string, unknown>>();
   const rosterByNormalizedName = new Map<string, Array<Record<string, unknown>>>();
   for (const student of rosterStudents) {
     const studentId = rosterStudentId(student);
     if (studentId && !rosterById.has(studentId)) {
       rosterById.set(studentId, student);
+    }
+    const studentCode = rosterStudentCode(student);
+    const normalizedStudentCode = studentCode ? normalizeLookupValue(studentCode) : "";
+    if (normalizedStudentCode && !rosterByStudentCode.has(normalizedStudentCode)) {
+      rosterByStudentCode.set(normalizedStudentCode, student);
     }
 
     const studentName = rosterStudentName(student);
@@ -664,6 +700,17 @@ function resolveSchoolHintFallbackTargets(
     if (directStudentId && rosterById.has(directStudentId)) {
       candidateIds.add(directStudentId);
       matched = true;
+    }
+
+    if (!matched) {
+      const directStudentCode = listEntryStudentCode(row);
+      const normalizedStudentCode = directStudentCode ? normalizeLookupValue(directStudentCode) : "";
+      const matchedStudent = normalizedStudentCode ? rosterByStudentCode.get(normalizedStudentCode) ?? null : null;
+      const matchedStudentId = matchedStudent ? rosterStudentId(matchedStudent) : null;
+      if (matchedStudentId) {
+        candidateIds.add(matchedStudentId);
+        matched = true;
+      }
     }
 
     if (!matched) {
@@ -789,7 +836,7 @@ async function fetchDisciplineEntriesByStudentFallback(
   sleep: (ms: number) => Promise<void>,
   throttleDelayMs: number,
   targets: StudentSyncTargets | null,
-  fallbackReason: "school_empty" | "school_rows_missing_ids" | "school_hint_candidates" | "targeted",
+  fallbackReason: "school_empty" | "school_rows_missing_ids" | "school_hint_candidates" | "targeted" | "full_student_discovery",
   schoolRowCount?: number,
   onProgress?: (progress: StudentFallbackDiscoveryProgress) => void | Promise<void>,
   prefetchedStudents?: Array<Record<string, unknown>> | null
@@ -802,6 +849,8 @@ async function fetchDisciplineEntriesByStudentFallback(
   const warnings = [
     fallbackReason === "targeted"
       ? `sycamore_student_target_sync:${window.startDate}:${window.endDate}:${filtered.students.length}`
+      : fallbackReason === "full_student_discovery"
+        ? `sycamore_student_overview_discovery_used:${window.startDate}:${window.endDate}:${filtered.students.length}`
       : fallbackReason === "school_hint_candidates"
         ? `sycamore_school_rows_missing_ids_candidate_fallback_used:${window.startDate}:${window.endDate}:${schoolRowCount ?? 0}:${filtered.students.length}`
       : fallbackReason === "school_rows_missing_ids"
@@ -916,19 +965,43 @@ async function discoverDisciplineEntries(
     );
   }
 
+  if (sycamoreDiscoveryStrategy() === "student_overview") {
+    return fetchDisciplineEntriesByStudentFallback(
+      window,
+      config,
+      dependencies,
+      sleep,
+      throttleDelayMs,
+      null,
+      "full_student_discovery",
+      undefined,
+      onProgress,
+      prefetchedRosterStudents
+    );
+  }
+
   const schoolLevel = await fetchSycamoreDisciplineRange(window, config, dependencies);
-  const usableSchoolRecords = schoolLevel.records.filter(hasResolvableDisciplineEntry);
-  const unusableSchoolRecords = schoolLevel.records.length - usableSchoolRecords.length;
+  const datedSchoolRecords = schoolLevel.records.filter((record) => entryFallsWithinWindow(record, window));
+  const outOfWindowSchoolRecords = schoolLevel.records.length - datedSchoolRecords.length;
+  const usableSchoolRecords = datedSchoolRecords.filter(hasResolvableDisciplineEntry);
+  const unusableSchoolRecords = datedSchoolRecords.length - usableSchoolRecords.length;
+  const schoolWarnings =
+    outOfWindowSchoolRecords > 0
+      ? [
+          ...schoolLevel.warnings,
+          `sycamore_school_rows_out_of_window_skipped:${window.startDate}:${window.endDate}:${outOfWindowSchoolRecords}`
+        ]
+      : schoolLevel.warnings;
   if (usableSchoolRecords.length > 0) {
     return {
       records: dedupeDisciplineEntries(usableSchoolRecords),
       warnings:
         unusableSchoolRecords > 0
           ? [
-              ...schoolLevel.warnings,
+              ...schoolWarnings,
               `sycamore_school_rows_missing_ids_skipped:${window.startDate}:${window.endDate}:${unusableSchoolRecords}`
             ]
-          : schoolLevel.warnings,
+          : schoolWarnings,
       source: "school"
     };
   }
@@ -937,7 +1010,7 @@ async function discoverDisciplineEntries(
     prefetchedRosterStudents && prefetchedRosterStudents.length > 0
       ? prefetchedRosterStudents
       : await fetchSycamoreStudents(config, dependencies);
-  const hintTargets = resolveSchoolHintFallbackTargets(schoolLevel.records, rosterStudentsForFallback);
+  const hintTargets = resolveSchoolHintFallbackTargets(datedSchoolRecords, rosterStudentsForFallback);
   if (hintTargets.targets && hintTargets.unmatchedHintCount === 0) {
     const candidateFallback = await fetchDisciplineEntriesByStudentFallback(
       window,
@@ -954,7 +1027,7 @@ async function discoverDisciplineEntries(
     if (candidateFallback.records.length > 0) {
       return {
         records: dedupeDisciplineEntries(candidateFallback.records),
-        warnings: [...schoolLevel.warnings, ...candidateFallback.warnings],
+        warnings: [...schoolWarnings, ...candidateFallback.warnings],
         source: "student_fallback"
       };
     }
@@ -975,14 +1048,14 @@ async function discoverDisciplineEntries(
   if (fallback.records.length > 0) {
     return {
       records: dedupeDisciplineEntries(fallback.records),
-      warnings: [...schoolLevel.warnings, ...fallback.warnings],
+      warnings: [...schoolWarnings, ...fallback.warnings],
       source: "student_fallback"
     };
   }
 
   return {
     records: [],
-    warnings: [...schoolLevel.warnings, ...fallback.warnings],
+    warnings: [...schoolWarnings, ...fallback.warnings],
     source: "student_fallback"
   };
 }
@@ -1311,7 +1384,7 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
   const storage = input.storage ?? (hasSupabaseServiceRoleEnv() ? createStorageAdapter() : null);
   const config = input.config ?? getSycamoreClientConfigFromEnv();
   const dependencies = input.dependencies ?? {};
-  const throttleDelayMs = envNumber("SYCAMORE_REQUEST_DELAY_MS", 150, 0);
+  const throttleDelayMs = envNumber("SYCAMORE_REQUEST_DELAY_MS", 0, 0);
   const sleep = dependencies.sleep ?? (async (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   const studentTargets = resolveStudentSyncTargets(request);
 
@@ -1422,6 +1495,8 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
         const stageDescription =
           discoveryProgress.reason === "targeted"
             ? "Scanning the selected Sycamore student timelines for matching discipline records."
+            : discoveryProgress.reason === "full_student_discovery"
+              ? "Scanning individual Sycamore student timelines as the authoritative discovery source for this sync window."
             : discoveryProgress.reason === "school_hint_candidates"
               ? "Scanning candidate student timelines derived from school-feed rows because the feed lacked stable IDs."
             : "Scanning individual Sycamore student timelines because the school-wide feed returned no usable rows.";
@@ -1446,12 +1521,17 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
     const usedCandidateFallback = fetched.warnings.some((warning) =>
       warning.startsWith("sycamore_school_rows_missing_ids_candidate_fallback_used:")
     );
+    const usedStudentOverviewDiscovery = fetched.warnings.some((warning) =>
+      warning.startsWith("sycamore_student_overview_discovery_used:")
+    );
     await pushProgress("discovery", {
       stageProgress: 1,
       stageDescription:
         fetched.source === "student_fallback"
-          ? usedCandidateFallback
-            ? "Finished scanning candidate student timelines derived from school-feed rows for this sync window."
+          ? usedStudentOverviewDiscovery
+            ? "Finished scanning individual Sycamore student timelines as the authoritative discovery source for this sync window."
+            : usedCandidateFallback
+              ? "Finished scanning candidate student timelines derived from school-feed rows for this sync window."
             : "Finished scanning individual Sycamore student timelines for this sync window."
           : "Collecting the set of discipline records that match this sync window.",
       message:

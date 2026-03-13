@@ -172,7 +172,8 @@ test("runSycamoreDirectSync fetches school list, detail rows, and linked detenti
       SYCAMORE_ACCESS_TOKEN: "token-123",
       SYCAMORE_SCHOOL_ID: "1002",
       SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
-      SYCAMORE_REQUEST_DELAY_MS: "0"
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_DISCOVERY_STRATEGY: "school_feed"
     },
     async () => {
       const result = await runSycamoreDirectSync({
@@ -265,7 +266,8 @@ test("runSycamoreDirectSync emits stage progress snapshots for manual syncs", as
       SYCAMORE_ACCESS_TOKEN: "token-123",
       SYCAMORE_SCHOOL_ID: "1002",
       SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
-      SYCAMORE_REQUEST_DELAY_MS: "0"
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_DISCOVERY_STRATEGY: "school_feed"
     },
     async () => {
       await runSycamoreDirectSync({
@@ -349,7 +351,8 @@ test("runSycamoreDirectSync accepts camelCase discipline keys from the school fe
       SYCAMORE_ACCESS_TOKEN: "token-123",
       SYCAMORE_SCHOOL_ID: "1002",
       SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
-      SYCAMORE_REQUEST_DELAY_MS: "0"
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_DISCOVERY_STRATEGY: "school_feed"
     },
     async () => {
       const result = await runSycamoreDirectSync({
@@ -427,7 +430,8 @@ test("runSycamoreDirectSync falls back when school-feed rows are missing resolva
       SYCAMORE_ACCESS_TOKEN: "token-123",
       SYCAMORE_SCHOOL_ID: "1002",
       SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
-      SYCAMORE_REQUEST_DELAY_MS: "0"
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_DISCOVERY_STRATEGY: "auto"
     },
     async () => {
       const result = await runSycamoreDirectSync({
@@ -506,6 +510,174 @@ test("runSycamoreDirectSync falls back when school-feed rows are missing resolva
   );
 });
 
+test("runSycamoreDirectSync uses student-overview discovery by default for untargeted syncs", async () => {
+  const { store, disciplineLogs } = createInMemorySycamoreStore();
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_DISCOVERY_STRATEGY: undefined
+    },
+    async () => {
+      const result = await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.includes("/School/1002/Discipline")) {
+              throw new Error(`School feed should not be used by default: ${url}`);
+            }
+            if (url.endsWith("/School/1002/Students")) {
+              return new Response(JSON.stringify([{ ID: "stu-ext-1", StudentName: "Jane Doe", Grade: "8" }]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline")) {
+              return new Response(JSON.stringify([{ ID: "log-default-1", Date: "2026-03-10", Violation: "Disrespect" }]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-default-1")) {
+              return new Response(
+                JSON.stringify({
+                  ID: "log-default-1",
+                  StudentID: "stu-ext-1",
+                  StudentName: "Jane Doe",
+                  Grade: "8",
+                  Violation: "Disrespect",
+                  Resolution: "Lunch detention",
+                  Author: "Dean Smith",
+                  Date: "2026-03-10"
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            throw new Error(`Unexpected URL ${url}`);
+          },
+          sleep: async () => {}
+        }
+      });
+
+      assert.equal(result.status, "success");
+      assert.equal(result.recordsDiscovered, 1);
+      assert.equal(result.recordsUpserted, 1);
+      assert.equal(result.warnings.some((warning) => warning.startsWith("sycamore_student_overview_discovery_used:")), true);
+      assert.equal(disciplineLogs[0]?.sycamoreLogId, "log-default-1");
+    }
+  );
+});
+
+test("runSycamoreDirectSync ignores school-feed rows whose actual row date falls outside the requested window", async () => {
+  const { store, disciplineLogs } = createInMemorySycamoreStore();
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_DISCOVERY_STRATEGY: "auto"
+    },
+    async () => {
+      const result = await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.includes("/School/1002/Discipline") && url.includes("Date=2026-03-10")) {
+              return new Response(
+                JSON.stringify({
+                  Data: [{ ID: "log-out-of-window", StudentID: "stu-ext-2", Student: "John Smith", Grade: "8", Date: "2026-03-13" }]
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/School/1002/Students")) {
+              return new Response(
+                JSON.stringify([
+                  { ID: "stu-ext-1", FirstName: "Jane", LastName: "Doe", Grade: "8" },
+                  { ID: "stu-ext-2", FirstName: "John", LastName: "Smith", Grade: "8" }
+                ]),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline")) {
+              return new Response(JSON.stringify([{ ID: "log-correct-1", Date: "2026-03-10", Violation: "Disrespect" }]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-2/Discipline")) {
+              return new Response(JSON.stringify([]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-correct-1")) {
+              return new Response(
+                JSON.stringify({
+                  ID: "log-correct-1",
+                  StudentID: "stu-ext-1",
+                  StudentName: "Jane Doe",
+                  Grade: "8",
+                  Violation: "Disrespect",
+                  Resolution: "Lunch detention",
+                  Author: "Dean Smith",
+                  Date: "2026-03-10"
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            throw new Error(`Unexpected URL ${url}`);
+          },
+          sleep: async () => {}
+        }
+      });
+
+      assert.equal(result.status, "success");
+      assert.equal(result.recordsDiscovered, 1);
+      assert.equal(result.recordsUpserted, 1);
+      assert.equal(result.warnings.some((warning) => warning.startsWith("sycamore_school_rows_out_of_window_skipped:")), true);
+      assert.equal(disciplineLogs[0]?.sycamoreLogId, "log-correct-1");
+    }
+  );
+});
+
 test("runSycamoreDirectSync narrows school-feed fallback to candidate students when hint rows fully match roster names", async () => {
   const { store, disciplineLogs } = createInMemorySycamoreStore();
 
@@ -515,7 +687,8 @@ test("runSycamoreDirectSync narrows school-feed fallback to candidate students w
       SYCAMORE_SCHOOL_ID: "1002",
       SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
       SYCAMORE_REQUEST_DELAY_MS: "0",
-      SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY: "1"
+      SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY: "1",
+      SYCAMORE_DISCOVERY_STRATEGY: "auto"
     },
     async () => {
       const result = await runSycamoreDirectSync({
@@ -638,7 +811,8 @@ test("runSycamoreDirectSync skips already mirrored historical logs during manual
       SYCAMORE_SCHOOL_ID: "1002",
       SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
       SYCAMORE_REQUEST_DELAY_MS: "0",
-      SYCAMORE_SYNC_TODAY: "2026-03-13"
+      SYCAMORE_SYNC_TODAY: "2026-03-13",
+      SYCAMORE_DISCOVERY_STRATEGY: "school_feed"
     },
     async () => {
       const result = await runSycamoreDirectSync({
@@ -706,7 +880,8 @@ test("runSycamoreDirectSync emits discovery progress while scanning fallback stu
       SYCAMORE_SCHOOL_ID: "1002",
       SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
       SYCAMORE_REQUEST_DELAY_MS: "0",
-      SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY: "1"
+      SYCAMORE_FALLBACK_DISCOVERY_CONCURRENCY: "1",
+      SYCAMORE_DISCOVERY_STRATEGY: "auto"
     },
     async () => {
       await runSycamoreDirectSync({
@@ -808,7 +983,8 @@ test("runSycamoreDirectSync falls back to per-student discipline discovery when 
       SYCAMORE_ACCESS_TOKEN: "token-123",
       SYCAMORE_SCHOOL_ID: "1002",
       SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
-      SYCAMORE_REQUEST_DELAY_MS: "0"
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_DISCOVERY_STRATEGY: "auto"
     },
     async () => {
       const result = await runSycamoreDirectSync({
