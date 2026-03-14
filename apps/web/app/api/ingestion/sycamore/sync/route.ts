@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getCurrentSession } from "@/lib/session";
-import { runSycamoreDirectSync, sycamoreDirectSyncRequestSchema } from "@/lib/sycamore-direct-sync";
+import { sycamoreDirectSyncRequestSchema } from "@/lib/sycamore-direct-sync";
+import { enqueueSycamoreSyncBatch } from "@/lib/sycamore-sync-jobs";
 
 export const maxDuration = 300;
 
@@ -42,28 +43,18 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await runSycamoreDirectSync({
+    const result = await enqueueSycamoreSyncBatch({
       request: parsed.data,
       triggeredBy: "manual"
     });
-    if (result.status === "failed") {
-      return NextResponse.json(
-        {
-          error: result.warnings.join("\n") || "Sycamore sync failed before any records could be stored.",
-          sycamoreSync: result,
-          deprecated: true,
-          replacementPath: "/api/sycamore/sync"
-        },
-        { status: 502 }
-      );
-    }
     return NextResponse.json(
       {
-        sycamoreSync: result,
+        sycamoreSync: result.batch,
+        alreadyQueued: result.alreadyQueued,
         deprecated: true,
         replacementPath: "/api/sycamore/sync"
       },
-      { status: 200 }
+      { status: result.alreadyQueued ? 200 : 202 }
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Sycamore sync failure.";

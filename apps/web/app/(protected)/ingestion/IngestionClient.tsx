@@ -27,6 +27,40 @@ interface JobsResponse {
   jobs: ParseRun[];
 }
 
+type SycamoreSyncBatchStatus = "queued" | "running" | "success" | "partial" | "failed";
+
+interface SycamoreSyncBatch {
+  batchId: string;
+  syncLogId: string | null;
+  status: SycamoreSyncBatchStatus;
+  syncMode: "initial_backfill" | "manual_range" | "incremental";
+  window: {
+    startDate: string;
+    endDate: string;
+  };
+  overallWindow: {
+    startDate: string;
+    endDate: string;
+  };
+  totalChunks: number;
+  completedChunks: number;
+  failedChunks: number;
+  activeChunkIndex: number;
+  currentWindow: {
+    startDate: string;
+    endDate: string;
+  };
+  chunkSizeDays: number;
+  recordsDiscovered: number;
+  recordsUpserted: number;
+  warnings: string[];
+  warningsCount: number;
+  startedAt: string;
+  completedAt: string | null;
+  triggeredBy: string;
+  progress: SycamoreSyncProgressSnapshot | null;
+}
+
 interface JobActionResponse {
   parseRun?: ParseRun;
   parseRuns?: ParseRun[];
@@ -41,21 +75,10 @@ interface JobActionResponse {
   uploadErrors?: string[];
   parserWarnings?: string[];
   sourceWarnings?: string[];
-  sycamoreSync?: {
-    syncLogId: string;
-    status: "running" | "success" | "partial" | "failed";
-    syncMode: "initial_backfill" | "manual_range" | "incremental";
-    window: {
-      startDate: string;
-      endDate: string;
-    };
-    recordsDiscovered: number;
-    recordsUpserted: number;
-    warnings: string[];
-    startedAt: string;
-    completedAt: string;
-    triggeredBy: string;
-  };
+  sycamoreSync?: SycamoreSyncBatch;
+  activeSycamoreSync?: SycamoreSyncBatch | null;
+  recentSycamoreSyncs?: SycamoreSyncBatch[];
+  alreadyQueued?: boolean;
   deprecated?: boolean;
   replacementPath?: string;
   error?: string;
@@ -90,54 +113,6 @@ interface SycamoreSyncProgressSnapshot {
   message: string;
 }
 
-interface SycamoreSyncPlan {
-  syncMode: "initial_backfill" | "manual_range" | "incremental";
-  window: {
-    startDate: string;
-    endDate: string;
-  };
-}
-
-interface SycamoreSyncPlanResponse {
-  plan?: SycamoreSyncPlan;
-  error?: string;
-}
-
-interface SycamoreSyncBatchState {
-  syncMode: SycamoreSyncPlan["syncMode"];
-  overallWindow: {
-    startDate: string;
-    endDate: string;
-  };
-  totalChunks: number;
-  completedChunks: number;
-  activeChunkIndex: number;
-  currentWindow: {
-    startDate: string;
-    endDate: string;
-  };
-  chunkSizeDays: number;
-  recordsDiscovered: number;
-  recordsUpserted: number;
-  warningsCount: number;
-  startedAt: string;
-}
-
-type SycamoreSyncStreamLine =
-  | {
-      type: "progress";
-      progress: SycamoreSyncProgressSnapshot;
-    }
-  | {
-      type: "result";
-      sycamoreSync: NonNullable<JobActionResponse["sycamoreSync"]>;
-    }
-  | {
-      type: "error";
-      error: string;
-      status?: number;
-    };
-
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -149,32 +124,8 @@ function parseIsoDate(value: string): number {
   return Date.parse(`${value}T00:00:00.000Z`);
 }
 
-function addDaysToIsoDate(value: string, days: number): string {
-  const next = new Date(parseIsoDate(value));
-  next.setUTCDate(next.getUTCDate() + days);
-  return next.toISOString().slice(0, 10);
-}
-
 function inclusiveDaySpan(startDate: string, endDate: string): number {
   return Math.floor((parseIsoDate(endDate) - parseIsoDate(startDate)) / DAY_MS) + 1;
-}
-
-function buildSyncWindows(startDate: string, endDate: string, maxDays: number): Array<{ startDate: string; endDate: string }> {
-  const windows: Array<{ startDate: string; endDate: string }> = [];
-  let cursor = startDate;
-
-  while (cursor <= endDate) {
-    const chunkEnd = addDaysToIsoDate(cursor, maxDays - 1);
-    const windowEnd = chunkEnd < endDate ? chunkEnd : endDate;
-    windows.push({ startDate: cursor, endDate: windowEnd });
-    cursor = addDaysToIsoDate(windowEnd, 1);
-  }
-
-  return windows;
-}
-
-function shouldChunkSyncPlan(plan: SycamoreSyncPlan): boolean {
-  return plan.syncMode !== "incremental" && inclusiveDaySpan(plan.window.startDate, plan.window.endDate) > MAX_SYNC_WINDOW_DAYS;
 }
 
 function formatSyncWindow(window: { startDate: string; endDate: string }): string {
@@ -283,40 +234,27 @@ function syncStageSubtitle(progress: SycamoreSyncProgressSnapshot, stage: (typeo
   }
 }
 
-function parseNdjsonLines(input: string): { events: SycamoreSyncStreamLine[]; remainder: string } {
-  const lines = input.split("\n");
-  const remainder = lines.pop() ?? "";
-  const events: SycamoreSyncStreamLine[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const parsed = JSON.parse(trimmed) as SycamoreSyncStreamLine;
-    events.push(parsed);
-  }
-  return { events, remainder };
-}
-
 export function IngestionClient() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [jobs, setJobs] = useState<ParseRun[]>([]);
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [isStartingSync, setIsStartingSync] = useState(false);
   const [syncStartDate, setSyncStartDate] = useState(todayIsoDate);
   const [syncEndDate, setSyncEndDate] = useState(todayIsoDate);
   const [syncStudentNamesText, setSyncStudentNamesText] = useState("");
   const [syncGrade, setSyncGrade] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<JobActionResponse | null>(null);
-  const [syncProgress, setSyncProgress] = useState<SycamoreSyncProgressSnapshot | null>(null);
-  const [syncBatch, setSyncBatch] = useState<SycamoreSyncBatchState | null>(null);
+  const [syncBatch, setSyncBatch] = useState<SycamoreSyncBatch | null>(null);
+  const [recentSyncBatches, setRecentSyncBatches] = useState<SycamoreSyncBatch[]>([]);
   const [syncNow, setSyncNow] = useState(() => Date.now());
   const [showFallbackTools, setShowFallbackTools] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const syncProgress = syncBatch?.progress ?? null;
+  const isSyncing = isStartingSync || Boolean(syncBatch && (syncBatch.status === "queued" || syncBatch.status === "running"));
 
   function setCandidateFiles(nextFiles: File[]) {
     setSelectedFiles(nextFiles);
@@ -392,10 +330,11 @@ export function IngestionClient() {
 
   useEffect(() => {
     void loadJobs();
+    void loadSycamoreSyncJobs();
   }, []);
 
   useEffect(() => {
-    if (!isSyncing || (!syncProgress && !syncBatch)) {
+    if (!isSyncing || !syncBatch) {
       return;
     }
 
@@ -404,7 +343,7 @@ export function IngestionClient() {
     }, 1000);
 
     return () => window.clearInterval(interval);
-  }, [isSyncing, syncBatch, syncProgress]);
+  }, [isSyncing, syncBatch]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -447,264 +386,65 @@ export function IngestionClient() {
     }
   }
 
-  async function resolveSyncPlan(payload: Record<string, unknown>): Promise<SycamoreSyncPlan> {
-    const response = await fetch("/api/sycamore/sync/plan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const body = (await response.json().catch(() => null)) as SycamoreSyncPlanResponse | null;
+  async function loadSycamoreSyncJobs() {
+    try {
+      const response = await fetch("/api/sycamore/sync/jobs", { cache: "no-store" });
+      const body = (await response.json().catch(() => null)) as JobActionResponse | null;
+      if (!response.ok) {
+        return;
+      }
 
-    if (!response.ok || !body?.plan) {
-      throw new Error(body?.error || "Could not resolve the Sycamore sync plan.");
+      setSyncBatch((currentBatch) => body?.activeSycamoreSync ?? currentBatch);
+      setRecentSyncBatches(body?.recentSycamoreSyncs ?? []);
+    } catch {
+      // Ignore startup polling failures and let the manual action surface real errors later.
     }
-
-    return body.plan;
   }
 
-  async function runSyncStream(
-    payload: Record<string, unknown>,
-    options?: {
-      onProgress?: (progress: SycamoreSyncProgressSnapshot) => void;
+  async function loadSyncBatch(batchId: string): Promise<SycamoreSyncBatch | null> {
+    const response = await fetch(`/api/sycamore/sync/jobs?batchId=${encodeURIComponent(batchId)}`, {
+      cache: "no-store"
+    });
+    const body = (await response.json().catch(() => null)) as JobActionResponse | null;
+    if (!response.ok) {
+      throw new Error(body?.error || "Could not load the queued Sycamore sync.");
     }
-  ): Promise<{
-    result: NonNullable<JobActionResponse["sycamoreSync"]> | null;
-    error: string | null;
-  }> {
-    const response = await fetch("/api/sycamore/sync/stream", {
+    return body?.sycamoreSync ?? null;
+  }
+
+  async function enqueueSync(payload: Record<string, unknown>): Promise<SycamoreSyncBatch> {
+    const response = await fetch("/api/sycamore/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as JobActionResponse | null;
-      return {
-        result: body?.sycamoreSync ?? null,
-        error: body?.error || "Sycamore sync failed."
-      };
+    const body = (await response.json().catch(() => null)) as JobActionResponse | null;
+    if (!response.ok || !body?.sycamoreSync) {
+      throw new Error(body?.error || "Could not queue the Sycamore sync.");
     }
-
-    if (!response.body) {
-      return {
-        result: null,
-        error: "Sycamore sync started but no progress stream was returned."
-      };
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let syncResult: NonNullable<JobActionResponse["sycamoreSync"]> | null = null;
-    let syncError: string | null = null;
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) {
-        buffer += decoder.decode();
-        const trailing = buffer.trim();
-        if (trailing) {
-          const parsed = JSON.parse(trailing) as SycamoreSyncStreamLine;
-          if (parsed.type === "progress") {
-            options?.onProgress?.(parsed.progress);
-          } else if (parsed.type === "result") {
-            syncResult = parsed.sycamoreSync;
-          } else {
-            syncError = parsed.error || "Sycamore sync failed.";
-          }
-        }
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-      const parsed = parseNdjsonLines(buffer);
-      buffer = parsed.remainder;
-
-      for (const event of parsed.events) {
-        if (event.type === "progress") {
-          options?.onProgress?.(event.progress);
-          continue;
-        }
-        if (event.type === "result") {
-          syncResult = event.sycamoreSync;
-          continue;
-        }
-        syncError = event.error || "Sycamore sync failed.";
-      }
-    }
-
-    return { result: syncResult, error: syncError };
+    return body.sycamoreSync;
   }
 
   async function runSync(payload: Record<string, unknown>) {
-    setIsSyncing(true);
+    setIsStartingSync(true);
     setError(null);
     setLastResult(null);
-    setSyncProgress(null);
     setSyncBatch(null);
     setSyncNow(Date.now());
 
     try {
-      const plan = await resolveSyncPlan(payload);
-      const syncWindows = shouldChunkSyncPlan(plan)
-        ? buildSyncWindows(plan.window.startDate, plan.window.endDate, MAX_SYNC_WINDOW_DAYS)
-        : [plan.window];
-
-      if (syncWindows.length === 1) {
-        const { result, error: syncError } = await runSyncStream(payload, {
-          onProgress: (progress) => {
-            setSyncProgress(progress);
-            setSyncNow(Date.now());
-          }
-        });
-
-        if (result) {
-          setLastResult({ sycamoreSync: result });
-        }
-
-        if (result?.status === "failed") {
-          setError(result.warnings.join("\n") || "Sycamore sync failed before any records could be stored.");
-          return;
-        }
-        if (syncError) {
-          setError(syncError);
-          return;
-        }
-        if (!result) {
-          setError("Sycamore sync finished without a result.");
-        }
-        return;
-      }
-
-      const batchStartedAt = new Date().toISOString();
-      setSyncBatch({
-        syncMode: plan.syncMode,
-        overallWindow: plan.window,
-        totalChunks: syncWindows.length,
-        completedChunks: 0,
-        activeChunkIndex: 0,
-        currentWindow: syncWindows[0]!,
-        chunkSizeDays: MAX_SYNC_WINDOW_DAYS,
-        recordsDiscovered: 0,
-        recordsUpserted: 0,
-        warningsCount: 0,
-        startedAt: batchStartedAt
-      });
-
-      const aggregateWarnings: string[] = [];
-      const chunkResults: Array<NonNullable<JobActionResponse["sycamoreSync"]>> = [];
-      let aggregateRecordsDiscovered = 0;
-      let aggregateRecordsUpserted = 0;
-
-      for (let index = 0; index < syncWindows.length; index += 1) {
-        const currentWindow = syncWindows[index]!;
-        const warningBase = aggregateWarnings.length;
-        const chunkPayload: Record<string, unknown> = {
-          startDate: currentWindow.startDate,
-          endDate: currentWindow.endDate
-        };
-
-        if (Array.isArray(payload.studentNames) && payload.studentNames.length > 0) {
-          chunkPayload.studentNames = payload.studentNames;
-        }
-        if (Array.isArray(payload.studentIds) && payload.studentIds.length > 0) {
-          chunkPayload.studentIds = payload.studentIds;
-        }
-        if (typeof payload.grade === "string" && payload.grade) {
-          chunkPayload.grade = payload.grade;
-        }
-
-        setSyncBatch((current) =>
-          current
-            ? {
-                ...current,
-                activeChunkIndex: index,
-                currentWindow
-              }
-            : current
-        );
-
-        const { result, error: syncError } = await runSyncStream(chunkPayload, {
-          onProgress: (progress) => {
-            setSyncProgress(progress);
-            setSyncNow(Date.now());
-            setSyncBatch((current) =>
-              current
-                ? {
-                    ...current,
-                    activeChunkIndex: index,
-                    currentWindow: progress.window,
-                    warningsCount: warningBase + progress.warningsCount
-                  }
-                : current
-            );
-          }
-        });
-
-        if (result) {
-          setLastResult({ sycamoreSync: result });
-        }
-
-        if (result?.status === "failed") {
-          setError(
-            `Sycamore backfill chunk ${index + 1} of ${syncWindows.length} (${formatSyncWindow(currentWindow)}) failed. ${result.warnings.join("\n") || "No rows were stored."}`
-          );
-          return;
-        }
-        if (syncError) {
-          setError(`Sycamore backfill chunk ${index + 1} of ${syncWindows.length} (${formatSyncWindow(currentWindow)}) failed. ${syncError}`);
-          return;
-        }
-        if (!result) {
-          setError(
-            `Sycamore backfill chunk ${index + 1} of ${syncWindows.length} (${formatSyncWindow(currentWindow)}) finished without a result.`
-          );
-          return;
-        }
-
-        chunkResults.push(result);
-        aggregateWarnings.push(...result.warnings);
-        aggregateRecordsDiscovered += result.recordsDiscovered;
-        aggregateRecordsUpserted += result.recordsUpserted;
-
-        setSyncBatch((current) =>
-          current
-            ? {
-                ...current,
-                completedChunks: index + 1,
-                activeChunkIndex: Math.min(index + 1, syncWindows.length - 1),
-                currentWindow: syncWindows[Math.min(index + 1, syncWindows.length - 1)]!,
-                recordsDiscovered: aggregateRecordsDiscovered,
-                recordsUpserted: aggregateRecordsUpserted,
-                warningsCount: aggregateWarnings.length
-              }
-            : current
-        );
-      }
-
-      const finalChunkResult = chunkResults.at(-1);
-      if (!finalChunkResult) {
-        setError("Sycamore backfill finished without any chunk results.");
-        return;
-      }
-
-      setLastResult({
-        sycamoreSync: {
-          ...finalChunkResult,
-          syncMode: plan.syncMode,
-          status: chunkResults.some((result) => result.status === "partial") ? "partial" : "success",
-          window: plan.window,
-          recordsDiscovered: aggregateRecordsDiscovered,
-          recordsUpserted: aggregateRecordsUpserted,
-          warnings: aggregateWarnings,
-          startedAt: batchStartedAt,
-          completedAt: new Date().toISOString()
-        }
-      });
+      const batch = await enqueueSync(payload);
+      setSyncBatch(batch);
+      setLastResult({ sycamoreSync: batch });
+      setRecentSyncBatches((currentBatches) => [
+        batch,
+        ...currentBatches.filter((entry) => entry.batchId !== batch.batchId)
+      ]);
+      setSyncNow(Date.now());
     } catch (error) {
       setError(getErrorMessage(error, "Sycamore sync failed."));
     } finally {
-      setIsSyncing(false);
+      setIsStartingSync(false);
     }
   }
 
@@ -739,14 +479,61 @@ export function IngestionClient() {
     });
   }
 
+  useEffect(() => {
+    if (!syncBatch || (syncBatch.status !== "queued" && syncBatch.status !== "running")) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const nextBatch = await loadSyncBatch(syncBatch.batchId);
+        if (cancelled || !nextBatch) {
+          return;
+        }
+
+        setSyncBatch(nextBatch);
+        setRecentSyncBatches((currentBatches) => [
+          nextBatch,
+          ...currentBatches.filter((entry) => entry.batchId !== nextBatch.batchId)
+        ]);
+        setSyncNow(Date.now());
+
+        if (nextBatch.status !== "queued" && nextBatch.status !== "running") {
+          setLastResult({ sycamoreSync: nextBatch });
+          if (nextBatch.status === "failed") {
+            setError(nextBatch.warnings.join("\n") || "Sycamore sync failed before any records could be stored.");
+          }
+          void loadSycamoreSyncJobs();
+        }
+      } catch (pollError) {
+        if (!cancelled) {
+          setError(getErrorMessage(pollError, "Could not refresh the background Sycamore sync."));
+        }
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      void poll();
+    }, 5000);
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [syncBatch?.batchId, syncBatch?.status]);
+
   const summary = useMemo(() => {
     const uploadResults = lastResult?.uploadResults ?? [];
     const successfulManualUploads = uploadResults.filter((result) => result.parseRun);
     const failedManualUploads = uploadResults.filter((result) => result.error);
 
-      if (successfulManualUploads.length > 0) {
-        if (successfulManualUploads.length === 1 && failedManualUploads.length === 0) {
-          const run = successfulManualUploads[0]?.parseRun;
+    if (successfulManualUploads.length > 0) {
+      if (successfulManualUploads.length === 1 && failedManualUploads.length === 0) {
+        const run = successfulManualUploads[0]?.parseRun;
         return run ? `Fallback PDF job ${run.id} finished with status ${run.status}.` : null;
       }
 
@@ -755,12 +542,45 @@ export function IngestionClient() {
 
     if (lastResult?.sycamoreSync) {
       const result = lastResult.sycamoreSync;
-      return `${result.syncMode === "initial_backfill" ? "Initial backfill" : result.syncMode === "incremental" ? "Incremental" : "Manual range"} Sycamore sync ${result.window.startDate} to ${result.window.endDate} stored ${result.recordsUpserted} record${result.recordsUpserted === 1 ? "" : "s"}${result.status === "partial" ? " with warnings" : ""}.`;
+      const syncLabel =
+        result.syncMode === "initial_backfill"
+          ? "Initial backfill"
+          : result.syncMode === "incremental"
+            ? "Incremental"
+            : "Manual range";
+      if (result.status === "queued") {
+        return `${syncLabel} Sycamore sync ${result.window.startDate} to ${result.window.endDate} is queued in the background as ${result.totalChunks} job${result.totalChunks === 1 ? "" : "s"}.`;
+      }
+      if (result.status === "running") {
+        return `${syncLabel} Sycamore sync ${result.window.startDate} to ${result.window.endDate} is running in the background. ${result.completedChunks} of ${result.totalChunks} job${result.totalChunks === 1 ? "" : "s"} finished so far.`;
+      }
+      return `${syncLabel} Sycamore sync ${result.window.startDate} to ${result.window.endDate} stored ${result.recordsUpserted} record${result.recordsUpserted === 1 ? "" : "s"}${result.status === "partial" ? " with warnings" : ""}.`;
     }
 
     if (!lastResult?.parseRun) {
       return null;
     }
+
+    return `Fallback PDF job ${lastResult.parseRun.id} finished with status ${lastResult.parseRun.status}.`;
+  }, [lastResult]);
+
+  const summaryTone = useMemo<"info" | "success">(() => {
+    const sycamoreStatus = lastResult?.sycamoreSync?.status;
+    if (sycamoreStatus === "queued" || sycamoreStatus === "running") {
+      return "info";
+    }
+    return "success";
+  }, [lastResult]);
+
+  const summaryTitle = useMemo(() => {
+    const sycamoreStatus = lastResult?.sycamoreSync?.status;
+    if (sycamoreStatus === "queued") {
+      return "Sycamore sync queued.";
+    }
+    if (sycamoreStatus === "running") {
+      return "Sycamore sync running.";
+    }
+    return "Latest intake updated.";
   }, [lastResult]);
 
   const actionWarnings = useMemo(() => {
@@ -791,6 +611,41 @@ export function IngestionClient() {
       )
     : null;
   const displayedOverallProgress = batchOverallProgress ?? syncProgress?.overallProgress ?? 0;
+  const syncStageLabel =
+    syncProgress?.stageLabel ??
+    (syncBatch?.status === "queued"
+      ? "Queued"
+      : syncBatch?.status === "failed"
+        ? "Failed"
+        : syncBatch?.status === "success" || syncBatch?.status === "partial"
+          ? "Completed"
+          : "Starting");
+  const syncStageDescription =
+    syncProgress?.stageDescription ??
+    (syncBatch?.status === "queued"
+      ? "The background worker will pick up this queued Sycamore sync automatically. On Vercel Hobby this usually means the next per-minute worker run."
+      : syncBatch?.status === "failed"
+        ? "The background Sycamore sync stopped before the batch could finish."
+        : syncBatch?.status === "success" || syncBatch?.status === "partial"
+          ? "The background Sycamore sync batch has finished."
+          : "Preparing the background Sycamore sync.");
+  const syncMessage =
+    syncProgress?.message ??
+    (syncBatch?.status === "queued"
+      ? `Queued ${syncBatch.totalChunks} background job${syncBatch.totalChunks === 1 ? "" : "s"} for ${formatSyncWindow(syncBatch.overallWindow)}.`
+      : syncBatch?.status === "failed"
+        ? syncBatch.warnings.join("\n") || "The background Sycamore sync failed."
+        : syncBatch?.status === "success" || syncBatch?.status === "partial"
+          ? `Background sync batch finished with ${syncBatch.recordsUpserted} stored row${syncBatch.recordsUpserted === 1 ? "" : "s"}.`
+          : "Waiting for the background worker to report progress.");
+  const syncStatusTone =
+    syncBatch?.status === "failed"
+      ? "danger"
+      : syncBatch?.status === "success" || syncBatch?.status === "partial"
+        ? "success"
+        : syncBatch?.status === "queued"
+          ? "warning"
+          : "info";
 
   return (
     <div className="space-y-6">
@@ -827,8 +682,8 @@ export function IngestionClient() {
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">How to use it</p>
             <p className="text-sm leading-7 text-[var(--color-muted)]">
               Run the default sync for routine refreshes. Use a date range only for targeted backfill, validation
-              windows, or one-off investigations. Large initial backfills and wide manual ranges automatically run in
-              smaller windows to stay inside deployment limits.
+              windows, or one-off investigations. Large initial backfills and wide manual ranges are queued as smaller
+              background windows so the app does not need to hold one long request open.
             </p>
           </SoftPanel>
 
@@ -871,7 +726,7 @@ export function IngestionClient() {
                   ? "Student-name and grade filters require a selected date range. Default sync is reserved for full-source refreshes."
                   : "Default sync continues from the last successful window with a small overlap. Date-range sync is for explicit backfill or comparison work."}
                 {willChunkSelectedRange
-                  ? ` Selected windows longer than ${MAX_SYNC_WINDOW_DAYS} days are split automatically into ${MAX_SYNC_WINDOW_DAYS}-day backfill chunks.`
+                  ? ` Selected windows longer than ${MAX_SYNC_WINDOW_DAYS} days are split automatically into ${MAX_SYNC_WINDOW_DAYS}-day background chunks.`
                   : ""}
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -890,7 +745,7 @@ export function IngestionClient() {
             </div>
           </form>
 
-          {syncProgress ? (
+          {syncBatch ? (
             <SoftPanel className="space-y-5 border-white/70 bg-white/88">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="space-y-2">
@@ -898,38 +753,31 @@ export function IngestionClient() {
                     Sync progress
                   </p>
                   <div className="space-y-1">
-                    <h3 className="font-display text-2xl text-[var(--color-ink)]">{syncProgress.stageLabel}</h3>
+                    <h3 className="font-display text-2xl text-[var(--color-ink)]">{syncStageLabel}</h3>
                     <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
-                      {syncProgress.stageDescription}
+                      {syncStageDescription}
                     </p>
                     {syncBatch ? (
                       <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
-                        Automatic backfill batching is active for {formatSyncWindow(syncBatch.overallWindow)}. Current
-                        chunk {syncBatch.activeChunkIndex + 1} of {syncBatch.totalChunks}:{" "}
-                        {formatSyncWindow(syncBatch.currentWindow)}.
+                        Background batching is active for {formatSyncWindow(syncBatch.overallWindow)}. Current job{" "}
+                        {syncBatch.activeChunkIndex + 1} of {syncBatch.totalChunks}: {formatSyncWindow(syncBatch.currentWindow)}.
                       </p>
                     ) : null}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge
-                    tone={
-                      syncProgress.stage === "failed"
-                        ? "danger"
-                        : syncProgress.stage === "complete"
-                          ? "success"
-                          : "info"
-                    }
-                  >
-                    {syncProgress.stage === "complete"
-                      ? "Completed"
-                      : syncProgress.stage === "failed"
-                        ? "Failed"
-                        : "Running"}
+                  <StatusBadge tone={syncStatusTone}>
+                    {syncBatch.status === "queued"
+                      ? "Queued"
+                      : syncBatch.status === "running"
+                        ? "Running"
+                        : syncBatch.status === "failed"
+                          ? "Failed"
+                          : "Completed"}
                   </StatusBadge>
                   {syncBatch ? (
                     <StatusBadge tone="warning">
-                      Chunk {syncBatch.activeChunkIndex + 1} of {syncBatch.totalChunks}
+                      Job {syncBatch.activeChunkIndex + 1} of {syncBatch.totalChunks}
                     </StatusBadge>
                   ) : null}
                   {syncBatch && batchOverallProgress !== null ? (
@@ -953,28 +801,28 @@ export function IngestionClient() {
                         ? "Initial backfill plan"
                         : syncBatch.syncMode === "manual_range"
                           ? "Manual backfill plan"
-                          : "Chunked sync plan"}
+                          : "Incremental sync plan"}
                     </p>
                   </div>
                   <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                      Current chunk
+                      Current job
                     </p>
                     <p className="mt-2 text-sm font-semibold text-[var(--color-ink)]">
                       {formatSyncWindow(syncBatch.currentWindow)}
                     </p>
                     <p className="mt-1 text-sm text-[var(--color-muted)]">
-                      Up to {syncBatch.chunkSizeDays} days per request
+                      Up to {syncBatch.chunkSizeDays} days per queued run
                     </p>
                   </div>
                   <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                      Chunks completed
+                      Jobs completed
                     </p>
                     <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
                       {syncBatch.completedChunks} / {syncBatch.totalChunks}
                     </p>
-                    <p className="mt-1 text-sm text-[var(--color-muted)]">Each chunk is streamed and committed separately.</p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">Each background job is written and tracked separately.</p>
                   </div>
                   <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
@@ -990,7 +838,8 @@ export function IngestionClient() {
                 </div>
               ) : null}
 
-              <div className="space-y-3">
+              {syncProgress ? (
+                <div className="space-y-3">
                 <div className="h-2 overflow-hidden rounded-full bg-[var(--color-soft-surface)]">
                   <div
                     className={cn(
@@ -1043,63 +892,66 @@ export function IngestionClient() {
                   })}
                 </div>
               </div>
+              ) : null}
 
-              <div className="grid gap-4 md:grid-cols-4">
-                <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                    Roster
-                  </p>
-                  <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
-                    {syncProgress.rosterStudentsUpserted}
-                  </p>
-                  <p className="mt-1 text-sm text-[var(--color-muted)]">
-                    {syncProgress.rosterStudentsFetched > 0
-                      ? `${syncProgress.rosterStudentsFetched} students fetched`
-                      : "Waiting for roster scan"}
-                  </p>
+              {syncProgress ? (
+                <div className="grid gap-4 md:grid-cols-4">
+                  <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Roster
+                    </p>
+                    <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
+                      {syncProgress.rosterStudentsUpserted}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {syncProgress.rosterStudentsFetched > 0
+                        ? `${syncProgress.rosterStudentsFetched} students fetched`
+                        : "Waiting for roster scan"}
+                    </p>
+                  </div>
+                  <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Discovery
+                    </p>
+                    <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
+                      {syncProgress.discoveredRecords}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {syncProgress.discoveryStudentsTotal > 0
+                        ? `${syncProgress.discoveryStudentsProcessed} of ${syncProgress.discoveryStudentsTotal} students scanned`
+                        : "Incidents found in the selected window"}
+                    </p>
+                  </div>
+                  <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Detail fetch
+                    </p>
+                    <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
+                      {syncProgress.detailRecordsProcessed}
+                      {syncProgress.detailRecordsTotal > 0 ? ` / ${syncProgress.detailRecordsTotal}` : ""}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {syncProgress.detailRecordsTotal > 0
+                        ? `${Math.max(syncProgress.detailRecordsTotal - syncProgress.detailRecordsProcessed, 0)} left`
+                        : "Waiting for detail stage"}
+                    </p>
+                  </div>
+                  <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Upsert
+                    </p>
+                    <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">{syncProgress.recordsUpserted}</p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {syncProgress.warningsCount > 0
+                        ? `${syncProgress.warningsCount} warning${syncProgress.warningsCount === 1 ? "" : "s"}`
+                        : "No warnings so far"}
+                    </p>
+                  </div>
                 </div>
-                <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                    Discovery
-                  </p>
-                  <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
-                    {syncProgress.discoveredRecords}
-                  </p>
-                  <p className="mt-1 text-sm text-[var(--color-muted)]">
-                    {syncProgress.discoveryStudentsTotal > 0
-                      ? `${syncProgress.discoveryStudentsProcessed} of ${syncProgress.discoveryStudentsTotal} students scanned`
-                      : "Incidents found in the selected window"}
-                  </p>
-                </div>
-                <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                    Detail fetch
-                  </p>
-                  <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
-                    {syncProgress.detailRecordsProcessed}
-                    {syncProgress.detailRecordsTotal > 0 ? ` / ${syncProgress.detailRecordsTotal}` : ""}
-                  </p>
-                  <p className="mt-1 text-sm text-[var(--color-muted)]">
-                    {syncProgress.detailRecordsTotal > 0
-                      ? `${Math.max(syncProgress.detailRecordsTotal - syncProgress.detailRecordsProcessed, 0)} left`
-                      : "Waiting for detail stage"}
-                  </p>
-                </div>
-                <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                    Upsert
-                  </p>
-                  <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">{syncProgress.recordsUpserted}</p>
-                  <p className="mt-1 text-sm text-[var(--color-muted)]">
-                    {syncProgress.warningsCount > 0
-                      ? `${syncProgress.warningsCount} warning${syncProgress.warningsCount === 1 ? "" : "s"}`
-                      : "No warnings so far"}
-                  </p>
-                </div>
-              </div>
+              ) : null}
 
               <div className="rounded-[1.3rem] border border-dashed border-[var(--color-line)] bg-[var(--color-panel)] px-4 py-3 text-sm leading-7 text-[var(--color-muted)]">
-                {syncProgress.message}
+                {syncMessage}
               </div>
             </SoftPanel>
           ) : null}
@@ -1155,6 +1007,75 @@ export function IngestionClient() {
             </p>
           </SoftPanel>
         </div>
+
+        <Panel className="space-y-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+                Background history
+              </p>
+              <h2 className="mt-2 font-display text-3xl text-[var(--color-ink)]">Recent Sycamore sync jobs</h2>
+            </div>
+            <div className="text-sm text-[var(--color-muted)]">
+              Background syncs continue even if you leave this page.
+            </div>
+          </div>
+
+          {recentSyncBatches.length === 0 ? (
+            <EmptyState
+              title="No background Sycamore jobs yet"
+              description="Queued sync batches will appear here once the first manual or scheduled job is created."
+            />
+          ) : (
+            <div className={tableShellClassName}>
+              <div className="overflow-x-auto">
+                <table className={tableClassName}>
+                  <thead>
+                    <tr>
+                      <th className={tableHeadCellClassName}>Started</th>
+                      <th className={tableHeadCellClassName}>Window</th>
+                      <th className={tableHeadCellClassName}>Status</th>
+                      <th className={tableHeadCellClassName}>Jobs</th>
+                      <th className={tableHeadCellClassName}>Rows stored</th>
+                      <th className={tableHeadCellClassName}>Warnings</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--color-line)]">
+                    {recentSyncBatches.map((batch) => (
+                      <tr key={batch.batchId}>
+                        <td className={tableCellClassName}>{new Date(batch.startedAt).toLocaleString()}</td>
+                        <td className={tableCellClassName}>
+                          <div className="space-y-1">
+                            <p className="font-semibold text-[var(--color-ink)]">
+                              {formatSyncWindow(batch.overallWindow)}
+                            </p>
+                            <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">
+                              {batch.syncMode === "initial_backfill"
+                                ? "Initial backfill"
+                                : batch.syncMode === "incremental"
+                                  ? "Incremental"
+                                  : "Manual range"}
+                            </p>
+                          </div>
+                        </td>
+                        <td className={tableCellClassName}>
+                          <StatusBadge tone={batch.status === "failed" ? "danger" : batch.status === "queued" ? "warning" : batch.status === "running" ? "info" : "success"}>
+                            {batch.status}
+                          </StatusBadge>
+                        </td>
+                        <td className={tableCellClassName}>
+                          {batch.completedChunks} / {batch.totalChunks}
+                        </td>
+                        <td className={tableCellClassName}>{batch.recordsUpserted}</td>
+                        <td className={tableCellClassName}>{batch.warningsCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </Panel>
 
         {showFallbackTools ? (
           <Panel className="space-y-5">
@@ -1276,7 +1197,7 @@ export function IngestionClient() {
       ) : null}
 
       {summary ? (
-        <InlineAlert tone="success" title="Latest intake completed.">
+        <InlineAlert tone={summaryTone} title={summaryTitle}>
           {summary}
         </InlineAlert>
       ) : null}

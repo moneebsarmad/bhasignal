@@ -380,6 +380,38 @@ create index if not exists sycamore_sync_log_completed_at_idx on public.sycamore
 create index if not exists sycamore_sync_log_status_idx on public.sycamore_sync_log (status);
 create index if not exists sycamore_sync_log_window_idx on public.sycamore_sync_log (window_start_date, window_end_date);
 
+create table if not exists public.sycamore_sync_jobs (
+  id uuid primary key default gen_random_uuid(),
+  batch_id text not null,
+  sequence_index integer not null default 0,
+  total_jobs integer not null default 1,
+  triggered_by text not null,
+  request_payload jsonb not null default '{}'::jsonb,
+  sync_mode text not null,
+  window_start_date date not null,
+  window_end_date date not null,
+  status text not null,
+  result_status text null,
+  sync_log_id uuid null references public.sycamore_sync_log (id),
+  progress_payload jsonb null,
+  records_discovered integer not null default 0,
+  records_upserted integer not null default 0,
+  warnings_json jsonb not null default '[]'::jsonb,
+  warnings_count integer not null default 0,
+  attempt_count integer not null default 0,
+  started_at timestamptz null,
+  completed_at timestamptz null,
+  last_heartbeat_at timestamptz null,
+  error_message text null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists sycamore_sync_jobs_batch_idx on public.sycamore_sync_jobs (batch_id, sequence_index);
+create index if not exists sycamore_sync_jobs_status_idx on public.sycamore_sync_jobs (status);
+create index if not exists sycamore_sync_jobs_created_at_idx on public.sycamore_sync_jobs (created_at);
+create index if not exists sycamore_sync_jobs_heartbeat_idx on public.sycamore_sync_jobs (last_heartbeat_at);
+create index if not exists sycamore_sync_jobs_window_idx on public.sycamore_sync_jobs (window_start_date, window_end_date);
+
 create index if not exists students_external_id_idx on public.students (external_id);
 
 create or replace function public.normalize_discipline_token(value text)
@@ -567,6 +599,7 @@ grant select on public.discipline_events to service_role;
 
 alter table public.sycamore_discipline_logs enable row level security;
 alter table public.sycamore_sync_log enable row level security;
+alter table public.sycamore_sync_jobs enable row level security;
 
 drop policy if exists sycamore_discipline_logs_deny_all on public.sycamore_discipline_logs;
 create policy sycamore_discipline_logs_deny_all
@@ -578,6 +611,13 @@ create policy sycamore_discipline_logs_deny_all
 drop policy if exists sycamore_sync_log_deny_all on public.sycamore_sync_log;
 create policy sycamore_sync_log_deny_all
   on public.sycamore_sync_log
+  for all
+  using (false)
+  with check (false);
+
+drop policy if exists sycamore_sync_jobs_deny_all on public.sycamore_sync_jobs;
+create policy sycamore_sync_jobs_deny_all
+  on public.sycamore_sync_jobs
   for all
   using (false)
   with check (false);

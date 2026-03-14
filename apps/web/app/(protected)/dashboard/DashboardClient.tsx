@@ -110,22 +110,27 @@ interface DashboardPayload {
   };
 }
 
-interface SycamoreSyncActionResponse {
-  sycamoreSync?: {
-    syncLogId: string;
-    status: "running" | "success" | "partial" | "failed";
-    syncMode: "initial_backfill" | "incremental" | "manual_range";
-    window: {
-      startDate: string;
-      endDate: string;
-    };
-    recordsDiscovered: number;
-    recordsUpserted: number;
-    warnings: string[];
-    startedAt: string;
-    completedAt: string;
-    triggeredBy: string;
+interface SycamoreSyncBatchSummary {
+  syncLogId: string | null;
+  status: "queued" | "running" | "success" | "partial" | "failed";
+  syncMode: "initial_backfill" | "incremental" | "manual_range";
+  window: {
+    startDate: string;
+    endDate: string;
   };
+  totalChunks: number;
+  completedChunks: number;
+  recordsDiscovered: number;
+  recordsUpserted: number;
+  warnings: string[];
+  startedAt: string;
+  completedAt: string | null;
+  triggeredBy: string;
+}
+
+interface SycamoreSyncActionResponse {
+  sycamoreSync?: SycamoreSyncBatchSummary;
+  alreadyQueued?: boolean;
   error?: string;
 }
 
@@ -243,6 +248,8 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
   const [error, setError] = useState<string | null>(null);
   const [isSyncingSycamore, setIsSyncingSycamore] = useState(false);
   const [sycamoreNotice, setSycamoreNotice] = useState<string | null>(null);
+  const [sycamoreNoticeTone, setSycamoreNoticeTone] = useState<"info" | "success">("success");
+  const [sycamoreNoticeTitle, setSycamoreNoticeTitle] = useState("Sycamore sync updated.");
   const [sycamoreError, setSycamoreError] = useState<string | null>(null);
   const filtersRef = useRef({ grade: "", sourceType: DEFAULT_SOURCE_TYPE });
   filtersRef.current = { grade, sourceType };
@@ -281,12 +288,14 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
     setIsSyncingSycamore(true);
     setSycamoreError(null);
     setSycamoreNotice(null);
+    setSycamoreNoticeTitle("Sycamore sync updated.");
+    setSycamoreNoticeTone("success");
 
     try {
       const response = await fetch("/api/sycamore/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ triggered_by: "manual" })
+        body: JSON.stringify({})
       });
       const body = (await response.json().catch(() => null)) as SycamoreSyncActionResponse | null;
       if (!response.ok) {
@@ -297,11 +306,29 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
 
       const result = body?.sycamoreSync;
       if (result) {
-        setSycamoreNotice(
-          `${syncModeLabel(result.syncMode)} sync ${result.window.startDate} to ${result.window.endDate} stored ${result.recordsUpserted} records${result.status === "partial" ? " with warnings" : ""}.`
-        );
+        if (result.status === "queued") {
+          setSycamoreNoticeTitle(body?.alreadyQueued ? "Sycamore sync already queued." : "Sycamore sync queued.");
+          setSycamoreNoticeTone("info");
+          setSycamoreNotice(
+            `${syncModeLabel(result.syncMode)} sync ${result.window.startDate} to ${result.window.endDate} is queued in the background as ${result.totalChunks} job${result.totalChunks === 1 ? "" : "s"}.`
+          );
+        } else if (result.status === "running") {
+          setSycamoreNoticeTitle("Sycamore sync running.");
+          setSycamoreNoticeTone("info");
+          setSycamoreNotice(
+            `${syncModeLabel(result.syncMode)} sync ${result.window.startDate} to ${result.window.endDate} is running in the background. ${result.completedChunks} of ${result.totalChunks} job${result.totalChunks === 1 ? "" : "s"} finished so far.`
+          );
+        } else {
+          setSycamoreNoticeTitle("Sycamore sync finished.");
+          setSycamoreNoticeTone("success");
+          setSycamoreNotice(
+            `${syncModeLabel(result.syncMode)} sync ${result.window.startDate} to ${result.window.endDate} stored ${result.recordsUpserted} records${result.status === "partial" ? " with warnings" : ""}.`
+          );
+        }
       }
-      await loadMetrics();
+      if (result?.status !== "queued" && result?.status !== "running") {
+        await loadMetrics();
+      }
     } catch (syncError) {
       setSycamoreError(
         syncError instanceof Error && syncError.message.trim() ? syncError.message : "Sycamore sync failed."
@@ -779,7 +806,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                     ) : null}
 
                     {sycamoreNotice ? (
-                      <InlineAlert tone="success" title="Sycamore sync finished.">
+                      <InlineAlert tone={sycamoreNoticeTone} title={sycamoreNoticeTitle}>
                         {sycamoreNotice}
                       </InlineAlert>
                     ) : null}

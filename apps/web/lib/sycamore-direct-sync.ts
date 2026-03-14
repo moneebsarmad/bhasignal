@@ -217,6 +217,7 @@ interface RunSycamoreDirectSyncInput {
   config?: SycamoreClientConfig;
   dependencies?: SycamoreClientDependencies;
   onProgress?: (snapshot: SycamoreSyncProgressSnapshot) => void | Promise<void>;
+  resolvedPlan?: SycamoreDirectSyncPlan;
 }
 
 export interface SycamoreRosterSyncResult {
@@ -1393,7 +1394,7 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
     await storage.ensureSchema();
   }
 
-  const plan = await resolveSyncPlan(store, request);
+  const plan = input.resolvedPlan ?? (await resolveSyncPlan(store, request));
   const syncLog = await store.createSyncLog({
     triggeredBy: input.triggeredBy,
     syncMode: plan.syncMode,
