@@ -660,7 +660,7 @@ export function IngestionClient() {
   const syncStageDescription =
     syncProgress?.stageDescription ??
     (syncBatch?.status === "queued"
-      ? "The background worker will pick up this queued Sycamore sync automatically. On Vercel Hobby this usually means the next per-minute worker run."
+      ? "This queued Sycamore sync will run when the daily cron advances the queue, or immediately if you use Run next job now."
       : syncBatch?.status === "failed"
         ? "The background Sycamore sync stopped before the batch could finish."
         : syncBatch?.status === "success" || syncBatch?.status === "partial"
@@ -674,7 +674,7 @@ export function IngestionClient() {
         ? syncBatch.warnings.join("\n") || "The background Sycamore sync failed."
         : syncBatch?.status === "success" || syncBatch?.status === "partial"
           ? `Background sync batch finished with ${syncBatch.recordsUpserted} stored row${syncBatch.recordsUpserted === 1 ? "" : "s"}.`
-          : "Waiting for the background worker to report progress.");
+          : "Waiting for the queued Sycamore job to report progress.");
   const syncStatusTone =
     syncBatch?.status === "failed"
       ? "danger"

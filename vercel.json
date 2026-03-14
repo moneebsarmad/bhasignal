@@ -3,10 +3,6 @@
     {
       "path": "/api/sycamore/sync",
       "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/sycamore/sync/jobs/run",
-      "schedule": "* * * * *"
     }
   ]
 }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getCurrentSession } from "@/lib/session";
 import { sycamoreDirectSyncRequestSchema } from "@/lib/sycamore-direct-sync";
-import { enqueueSycamoreSyncBatch } from "@/lib/sycamore-sync-jobs";
+import { enqueueSycamoreSyncBatch, runNextQueuedSycamoreSyncJob } from "@/lib/sycamore-sync-jobs";
 
 export const maxDuration = 300;
 
@@ -39,15 +39,18 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await enqueueSycamoreSyncBatch({
+    const queued = await enqueueSycamoreSyncBatch({
       triggeredBy: "cron"
     });
+    const executed = await runNextQueuedSycamoreSyncJob();
     return NextResponse.json(
       {
-        sycamoreSync: result.batch,
-        alreadyQueued: result.alreadyQueued
+        sycamoreSync: executed.batch ?? queued.batch,
+        alreadyQueued: queued.alreadyQueued,
+        executed: executed.executed,
+        jobId: executed.job?.id ?? null
       },
-      { status: result.alreadyQueued ? 200 : 202 }
+      { status: queued.alreadyQueued ? 200 : 202 }
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Sycamore sync failure.";
