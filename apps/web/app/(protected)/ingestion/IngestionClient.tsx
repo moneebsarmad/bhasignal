@@ -84,6 +84,13 @@ interface JobActionResponse {
   error?: string;
 }
 
+interface SycamoreSyncWorkerResponse {
+  executed: boolean;
+  jobId: string | null;
+  sycamoreSync?: SycamoreSyncBatch | null;
+  error?: string;
+}
+
 interface SycamoreSyncProgressSnapshot {
   syncLogId: string;
   syncMode: "initial_backfill" | "manual_range" | "incremental";
@@ -240,6 +247,7 @@ export function IngestionClient() {
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isStartingSync, setIsStartingSync] = useState(false);
+  const [isRunningWorker, setIsRunningWorker] = useState(false);
   const [syncStartDate, setSyncStartDate] = useState(todayIsoDate);
   const [syncEndDate, setSyncEndDate] = useState(todayIsoDate);
   const [syncStudentNamesText, setSyncStudentNamesText] = useState("");
@@ -479,6 +487,35 @@ export function IngestionClient() {
     });
   }
 
+  async function runQueuedSyncJobNow() {
+    setIsRunningWorker(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/sycamore/sync/jobs/run", {
+        method: "POST"
+      });
+      const body = (await response.json().catch(() => null)) as SycamoreSyncWorkerResponse | null;
+      if (!response.ok) {
+        throw new Error(body?.error || "Could not run the queued Sycamore sync job.");
+      }
+
+      if (body?.sycamoreSync) {
+        setSyncBatch(body.sycamoreSync);
+        setLastResult({ sycamoreSync: body.sycamoreSync });
+        setRecentSyncBatches((currentBatches) => [
+          body.sycamoreSync!,
+          ...currentBatches.filter((entry) => entry.batchId !== body.sycamoreSync?.batchId)
+        ]);
+        setSyncNow(Date.now());
+      }
+    } catch (workerError) {
+      setError(getErrorMessage(workerError, "Could not run the queued Sycamore sync job."));
+    } finally {
+      setIsRunningWorker(false);
+    }
+  }
+
   useEffect(() => {
     if (!syncBatch || (syncBatch.status !== "queued" && syncBatch.status !== "running")) {
       return;
@@ -654,9 +691,17 @@ export function IngestionClient() {
         title="Manage synced records and fallback imports"
         description="Run the primary Sycamore sync for normal intake, then use PDF import only when data is missing from Sycamore or you need historical backfill."
         actions={
-          <Button type="button" variant="secondary" onClick={() => void loadJobs()} disabled={isLoadingJobs}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              void loadJobs();
+              void loadSycamoreSyncJobs();
+            }}
+            disabled={isLoadingJobs}
+          >
             <RefreshCcw className={cn("h-4 w-4", isLoadingJobs ? "animate-spin" : "")} />
-            {isLoadingJobs ? "Refreshing..." : "Refresh activity"}
+            {isLoadingJobs ? "Refreshing..." : "Refresh intake"}
           </Button>
         }
       />
@@ -766,6 +811,12 @@ export function IngestionClient() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
+                  {syncBatch.status === "queued" ? (
+                    <Button type="button" variant="secondary" size="sm" disabled={isRunningWorker} onClick={() => void runQueuedSyncJobNow()}>
+                      <RefreshCcw className={cn("h-4 w-4", isRunningWorker ? "animate-spin" : "")} />
+                      {isRunningWorker ? "Starting..." : "Run next job now"}
+                    </Button>
+                  ) : null}
                   <StatusBadge tone={syncStatusTone}>
                     {syncBatch.status === "queued"
                       ? "Queued"

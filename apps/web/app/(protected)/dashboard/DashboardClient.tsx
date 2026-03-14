@@ -794,6 +794,9 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                           {isSyncingSycamore ? "Syncing Sycamore..." : "Sync from Sycamore"}
                         </Button>
                       ) : null}
+                      <Link href="/ingestion" className={buttonStyles({ variant: "ghost" })}>
+                        Monitor sync jobs
+                      </Link>
                       <Link href="/reports/reconciliation" className={buttonStyles({ variant: "secondary" })}>
                         Open reconciliation
                       </Link>
