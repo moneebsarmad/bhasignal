@@ -562,6 +562,7 @@ function detailFetchConcurrency(): number {
 }
 
 type SycamoreDiscoveryStrategy = "student_overview" | "school_feed" | "auto";
+const DEFAULT_DISCOVERY_GRADE_SCOPE = ["6", "7", "8", "9", "10", "11", "12"] as const;
 
 function sycamoreDiscoveryStrategy(): SycamoreDiscoveryStrategy {
   const raw = (process.env.SYCAMORE_DISCOVERY_STRATEGY ?? "student_overview").trim().toLowerCase();
@@ -569,6 +570,20 @@ function sycamoreDiscoveryStrategy(): SycamoreDiscoveryStrategy {
     return raw;
   }
   return "student_overview";
+}
+
+function discoveryGradeScope(): Set<string> {
+  const raw = process.env.SYCAMORE_DISCOVERY_ALLOWED_GRADES?.trim();
+  if (!raw) {
+    return new Set(DEFAULT_DISCOVERY_GRADE_SCOPE);
+  }
+
+  const scopedGrades = raw
+    .split(",")
+    .map((value) => normalizeSycamoreGrade(value.trim()))
+    .filter((value): value is string => Boolean(value));
+
+  return new Set(scopedGrades.length > 0 ? scopedGrades : DEFAULT_DISCOVERY_GRADE_SCOPE);
 }
 
 function isNonBlockingWarning(warning: string): boolean {
@@ -787,9 +802,13 @@ function filterRosterStudents(
   students: Array<Record<string, unknown>>;
   warnings: string[];
 } {
+  const allowedGrades = discoveryGradeScope();
   if (!targets) {
     return {
-      students,
+      students: students.filter((student) => {
+        const grade = rosterStudentGrade(student);
+        return !grade || allowedGrades.has(grade);
+      }),
       warnings: []
     };
   }
@@ -805,6 +824,7 @@ function filterRosterStudents(
     const matchesId = Boolean(studentId && remainingIds.has(studentId));
     const matchesName = Boolean(normalizedName && remainingNames.has(normalizedName));
     const matchesGrade = !targets.grade || grade === targets.grade;
+    const matchesScopedGrades = !grade || allowedGrades.has(grade);
     const matchesIdentity = hasIdentitySelectors ? matchesId || matchesName : true;
 
     if (matchesId && studentId && matchesGrade) {
@@ -814,7 +834,7 @@ function filterRosterStudents(
       remainingNames.delete(normalizedName);
     }
 
-    return matchesIdentity && matchesGrade;
+    return matchesIdentity && matchesGrade && matchesScopedGrades;
   });
 
   for (const missingId of remainingIds) {

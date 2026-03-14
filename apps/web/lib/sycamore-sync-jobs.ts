@@ -135,7 +135,7 @@ interface SycamoreSyncJobStore {
 
 type RowRecord = Record<string, unknown>;
 
-const DEFAULT_MAX_WINDOW_DAYS = 14;
+const DEFAULT_MAX_WINDOW_DAYS = 3;
 const DEFAULT_STALE_AFTER_MINUTES = 15;
 
 function envNumber(name: string, fallback: number, min = 0): number {
@@ -628,7 +628,7 @@ export async function enqueueSycamoreSyncBatch(input: {
     store: syncStore
   });
   const windows =
-    plan.syncMode !== "incremental" && inclusiveDaySpan(plan.window.startDate, plan.window.endDate) > maxAsyncWindowDays()
+    inclusiveDaySpan(plan.window.startDate, plan.window.endDate) > maxAsyncWindowDays()
       ? buildSyncWindows(plan.window.startDate, plan.window.endDate, maxAsyncWindowDays())
       : [plan.window];
   const batchId = crypto.randomUUID();

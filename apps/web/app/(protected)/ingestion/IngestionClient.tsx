@@ -125,7 +125,7 @@ function todayIsoDate(): string {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const MAX_SYNC_WINDOW_DAYS = 14;
+const MAX_SYNC_WINDOW_DAYS = 3;
 
 function parseIsoDate(value: string): number {
   return Date.parse(`${value}T00:00:00.000Z`);

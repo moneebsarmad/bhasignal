@@ -1223,6 +1223,84 @@ test("runSycamoreDirectSync supports grade-targeted sync windows", async () => {
   );
 });
 
+test("runSycamoreDirectSync limits untargeted student-overview discovery to grades 6 through 12", async () => {
+  const { store, disciplineLogs } = createInMemorySycamoreStore();
+
+  await withEnv(
+    {
+      SYCAMORE_ACCESS_TOKEN: "token-123",
+      SYCAMORE_SCHOOL_ID: "1002",
+      SYCAMORE_API_BASE_URL: "https://school.sycamoreeducation.com/api/v1",
+      SYCAMORE_REQUEST_DELAY_MS: "0",
+      SYCAMORE_DISCOVERY_STRATEGY: "student_overview"
+    },
+    async () => {
+      const result = await runSycamoreDirectSync({
+        request: {
+          startDate: "2026-03-10",
+          endDate: "2026-03-10"
+        },
+        triggeredBy: "manual",
+        store,
+        config: {
+          baseUrl: "https://school.sycamoreeducation.com/api/v1",
+          accessToken: "token-123",
+          schoolId: "1002",
+          disciplinePathTemplate: "/School/{schoolId}/Discipline",
+          studentsPathTemplate: "/School/{schoolId}/Students",
+          timeoutMs: 2_000,
+          maxAttempts: 1,
+          retryBaseDelayMs: 1
+        },
+        dependencies: {
+          fetchImpl: async (input) => {
+            const url = String(input);
+            if (url.endsWith("/School/1002/Students")) {
+              return new Response(
+                JSON.stringify([
+                  { ID: "stu-ext-1", FirstName: "Jane", LastName: "Doe", Grade: "8" },
+                  { ID: "stu-ext-2", FirstName: "Fifth", LastName: "Grade", Grade: "5" }
+                ]),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline")) {
+              return new Response(JSON.stringify([{ ID: "log-5", Date: "2026-03-10", Violation: "Disrespect" }]), {
+                status: 200,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+            if (url.endsWith("/Student/stu-ext-1/Discipline/log-5")) {
+              return new Response(
+                JSON.stringify({
+                  Description: "Default discovery should stay within the supported grade scope",
+                  Date: "2026-03-10",
+                  Author: "Dean Smith",
+                  Violation: "Level 2: Disrespect",
+                  Resolution: "Lunch detention",
+                  Points: "3"
+                }),
+                { status: 200, headers: { "Content-Type": "application/json" } }
+              );
+            }
+            if (url.includes("/Student/stu-ext-2/")) {
+              throw new Error(`Unexpected out-of-scope grade fetch ${url}`);
+            }
+            throw new Error(`Unexpected URL ${url}`);
+          },
+          sleep: async () => {}
+        }
+      });
+
+      assert.equal(result.status, "success");
+      assert.equal(result.recordsDiscovered, 1);
+      assert.equal(disciplineLogs.length, 1);
+      assert.equal(disciplineLogs[0]?.studentName, "Jane Doe");
+      assert.equal(disciplineLogs[0]?.grade, "8");
+    }
+  );
+});
+
 test("resolveSycamoreDirectSyncPlan returns initial backfill when no successful sync exists", async () => {
   const { store } = createInMemorySycamoreStore();
 

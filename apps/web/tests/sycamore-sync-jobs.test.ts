@@ -9,6 +9,44 @@ import {
   type SycamoreSyncJobRecord
 } from "../lib/sycamore-sync-jobs";
 
+function withEnv<T>(updates: Record<string, string | undefined>, run: () => Promise<T> | T): Promise<T> | T {
+  const previous: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(updates)) {
+    previous[key] = process.env[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  const restore = () => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
+
+  try {
+    const result = run();
+    if (result instanceof Promise) {
+      return result.finally(restore);
+    }
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
+
+function inclusiveDaySpan(startDate: string, endDate: string): number {
+  return Math.floor((Date.parse(`${endDate}T00:00:00.000Z`) - Date.parse(`${startDate}T00:00:00.000Z`)) / 86_400_000) + 1;
+}
+
 function makeProgress(overrides: Partial<SycamoreSyncProgressSnapshot> = {}): SycamoreSyncProgressSnapshot {
   return {
     syncLogId: "sync_progress_1",
@@ -235,24 +273,118 @@ test("enqueueSycamoreSyncBatch splits wide manual ranges into queued windows", a
   });
 
   assert.equal(result.alreadyQueued, false);
-  assert.equal(result.jobs.length, 3);
-  assert.equal(result.batch.totalChunks, 3);
+  assert.equal(result.jobs.length, 11);
+  assert.equal(result.batch.totalChunks, 11);
   assert.equal(result.batch.status, "queued");
+  assert.deepEqual(result.jobs[0]?.window, { startDate: "2026-03-01", endDate: "2026-03-03" });
+  assert.deepEqual(result.jobs[1]?.window, { startDate: "2026-03-04", endDate: "2026-03-06" });
+  assert.deepEqual(result.jobs.at(-1)?.window, { startDate: "2026-03-31", endDate: "2026-03-31" });
+  assert.equal(result.jobs.every((job) => inclusiveDaySpan(job.window.startDate, job.window.endDate) <= 3), true);
   assert.deepEqual(
-    result.jobs.map((job) => job.window),
+    result.jobs.slice(0, 3).map((job) => [job.requestPayload.startDate, job.requestPayload.endDate]),
     [
-      { startDate: "2026-03-01", endDate: "2026-03-14" },
-      { startDate: "2026-03-15", endDate: "2026-03-28" },
-      { startDate: "2026-03-29", endDate: "2026-03-31" }
+      ["2026-03-01", "2026-03-03"],
+      ["2026-03-04", "2026-03-06"],
+      ["2026-03-07", "2026-03-09"]
     ]
   );
-  assert.deepEqual(
-    result.jobs.map((job) => [job.requestPayload.startDate, job.requestPayload.endDate]),
-    [
-      ["2026-03-01", "2026-03-14"],
-      ["2026-03-15", "2026-03-28"],
-      ["2026-03-29", "2026-03-31"]
-    ]
+});
+
+test("enqueueSycamoreSyncBatch also chunks wide incremental gaps into 3-day windows", async () => {
+  const createdJobs: SycamoreSyncJobRecord[] = [];
+  const jobStore = {
+    async ensureSchema() {},
+    async createSyncJobs(
+      inputs: Array<{
+        batchId: string;
+        sequenceIndex: number;
+        totalJobs: number;
+        triggeredBy: "manual" | "cron";
+        requestPayload: { startDate?: string; endDate?: string; incremental?: boolean };
+        syncMode: "initial_backfill" | "incremental" | "manual_range";
+        windowStartDate: string;
+        windowEndDate: string;
+      }>
+    ) {
+      const rows = inputs.map((input) =>
+        makeJob({
+          id: `job_incremental_${input.sequenceIndex + 1}`,
+          batchId: input.batchId,
+          sequenceIndex: input.sequenceIndex,
+          totalJobs: input.totalJobs,
+          triggeredBy: input.triggeredBy,
+          requestPayload: input.requestPayload,
+          syncMode: input.syncMode,
+          window: {
+            startDate: input.windowStartDate,
+            endDate: input.windowEndDate
+          }
+        })
+      );
+      createdJobs.push(...rows);
+      return rows;
+    },
+    async listSyncJobs() {
+      return [];
+    },
+    async listSyncJobsByBatch(batchId: string) {
+      return createdJobs.filter((job) => job.batchId === batchId);
+    },
+    async listActiveSyncJobs() {
+      return [];
+    },
+    async claimNextSyncJob() {
+      return null;
+    },
+    async updateRunningSyncJob() {},
+    async completeSyncJob() {},
+    async failSyncJob() {}
+  } as Parameters<typeof enqueueSycamoreSyncBatch>[0]["jobStore"];
+
+  await withEnv(
+    {
+      SYCAMORE_SYNC_TODAY: "2026-03-10"
+    },
+    async () => {
+      const result = await enqueueSycamoreSyncBatch({
+        request: {
+          incremental: true
+        },
+        triggeredBy: "cron",
+        syncStore: {
+          ...createMinimalSyncStore(),
+          async getLatestSuccessfulSyncLog() {
+            return {
+              id: "sync_prev_1",
+              triggeredBy: "cron",
+              startedAt: "2026-03-01T02:00:00.000Z",
+              completedAt: "2026-03-01T02:04:00.000Z",
+              recordsSynced: 10,
+              recordsDiscovered: 10,
+              recordsUpserted: 10,
+              status: "success",
+              errorMessage: null,
+              syncMode: "incremental",
+              windowStartDate: "2026-02-28",
+              windowEndDate: "2026-03-01"
+            };
+          }
+        },
+        jobStore
+      });
+
+      assert.equal(result.batch.syncMode, "incremental");
+      assert.equal(result.jobs.length, 4);
+      assert.deepEqual(
+        result.jobs.map((job) => job.window),
+        [
+          { startDate: "2026-03-01", endDate: "2026-03-03" },
+          { startDate: "2026-03-04", endDate: "2026-03-06" },
+          { startDate: "2026-03-07", endDate: "2026-03-09" },
+          { startDate: "2026-03-10", endDate: "2026-03-10" }
+        ]
+      );
+    }
   );
 });
 
