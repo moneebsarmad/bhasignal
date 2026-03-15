@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Database, RefreshCcw, Server, ShieldAlert, Workflow } from "lucide-react";
+import { RefreshCcw, Server, ShieldAlert, Workflow } from "lucide-react";
 
 import {
   Button,
@@ -132,7 +132,7 @@ export function DataOpsClient() {
       <PageHeader
         eyebrow="Admin controls"
         title="Data operations and system health"
-        description="Monitor storage mode, Sycamore sync health, workflow backlog, and recent operational failures without dropping into backend implementation details."
+        description="Track dependency health, workflow backlog, and failure signals without turning this page into a second intake dashboard."
         actions={
           <Button type="button" variant="secondary" onClick={() => void loadStatus()} disabled={isLoading}>
             <RefreshCcw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
@@ -168,24 +168,10 @@ export function DataOpsClient() {
 
           <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
             <StatCard
-              label="Stored logs"
-              value={data.sycamore.totalLogs}
-              description="Rows mirrored from Sycamore."
-              icon={Workflow}
-              href="/ingestion"
-            />
-            <StatCard
-              label="Linked logs"
-              value={data.sycamore.linkedLogs}
-              description="Matched to local students."
-              icon={Database}
-              href="/students"
-            />
-            <StatCard
               label="Failed syncs"
               value={data.sycamore.failedSyncs}
-              description="Need follow-up."
-              icon={ShieldAlert}
+              description="Sycamore runs needing follow-up."
+              icon={Workflow}
               href="/ingestion"
             />
             <StatCard
@@ -202,6 +188,20 @@ export function DataOpsClient() {
               icon={ShieldAlert}
               href="/students"
             />
+            <StatCard
+              label="Review-required imports"
+              value={data.ingestion.reviewRequiredJobs}
+              description="Legacy/manual jobs still needing attention."
+              icon={Workflow}
+              href="/ingestion"
+            />
+            <StatCard
+              label="Recent failures"
+              value={data.recentFailures.length}
+              description="Surfaced across sync and notification workflows."
+              icon={ShieldAlert}
+              href="/audit"
+            />
           </section>
 
           <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
@@ -210,7 +210,7 @@ export function DataOpsClient() {
                 <h2 className="font-display text-2xl text-[var(--color-ink)]">Dependencies</h2>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -224,7 +224,34 @@ export function DataOpsClient() {
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="font-semibold text-[var(--color-ink)]">Sycamore sync</p>
+                      <p className="font-semibold text-[var(--color-ink)]">Parser health</p>
+                      <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
+                        {data.parser.configured
+                          ? data.parser.baseUrl ?? "Parser URL configured"
+                          : "Parser is not configured in this environment."}
+                      </p>
+                      <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
+                        {data.parser.ok === null
+                          ? "Health has not been checked."
+                          : data.parser.ok
+                            ? "Parser health probe succeeded."
+                            : data.parser.error || `Health probe failed${data.parser.status ? ` with status ${data.parser.status}` : ""}.`}
+                      </p>
+                    </div>
+                    <StatusBadge
+                      tone={
+                        !data.parser.configured ? "warning" : data.parser.ok === null ? "neutral" : data.parser.ok ? "success" : "danger"
+                      }
+                    >
+                      {!data.parser.configured ? "not configured" : data.parser.ok === null ? "unknown" : data.parser.ok ? "healthy" : "failing"}
+                    </StatusBadge>
+                  </div>
+                </Panel>
+
+                <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-[var(--color-ink)]">Sycamore connection</p>
                       <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">{data.sycamore.baseUrl}</p>
                       <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
                         {data.sycamore.schoolId ? `School ${data.sycamore.schoolId}` : "School ID not configured"}
@@ -248,9 +275,17 @@ export function DataOpsClient() {
 
               <div className="grid gap-4 md:grid-cols-3">
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Total sync runs</p>
-                  <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{data.sycamore.totalSyncs}</p>
-                  <p className="mt-2 text-sm text-[var(--color-muted)]">Recorded Sycamore sync executions.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Last successful sync</p>
+                  <p className="mt-2 text-sm font-semibold text-[var(--color-ink)]">
+                    {data.sycamore.lastSuccessfulCompletedAt
+                      ? new Date(data.sycamore.lastSuccessfulCompletedAt).toLocaleString()
+                      : "No successful sync yet"}
+                  </p>
+                  <p className="mt-2 text-sm text-[var(--color-muted)]">
+                    {data.sycamore.lastSuccessfulWindow
+                      ? `Window ${data.sycamore.lastSuccessfulWindow.startDate} to ${data.sycamore.lastSuccessfulWindow.endDate}.`
+                      : "No successful window recorded yet."}
+                  </p>
                 </Panel>
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Active interventions</p>
@@ -258,11 +293,10 @@ export function DataOpsClient() {
                   <p className="mt-2 text-sm text-[var(--color-muted)]">Students currently carrying intervention work.</p>
                 </Panel>
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Last successful sync</p>
-                  <p className="mt-2 text-sm font-semibold text-[var(--color-ink)]">
-                    {data.sycamore.lastSuccessfulCompletedAt
-                      ? new Date(data.sycamore.lastSuccessfulCompletedAt).toLocaleString()
-                      : "No successful sync yet"}
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Legacy backlog</p>
+                  <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{data.ingestion.flaggedRows}</p>
+                  <p className="mt-2 text-sm text-[var(--color-muted)]">
+                    Flagged rows across historical parse/import jobs that may still need cleanup.
                   </p>
                 </Panel>
               </div>
@@ -300,48 +334,6 @@ export function DataOpsClient() {
                     </Panel>
                   ))}
                 </div>
-              ) : null}
-
-              {data.sycamore.configured ? (
-                <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-[var(--color-ink)]">Sycamore sync posture</p>
-                      <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
-                        {data.sycamore.totalSyncs} direct sync runs recorded, {data.sycamore.failedSyncs} failed.
-                      </p>
-                      <p className="mt-2 text-sm text-[var(--color-muted)]">
-                        Dataset holds {data.sycamore.totalLogs} logs, with {data.sycamore.linkedLogs} linked to local students.
-                      </p>
-                      <p className="mt-2 text-sm text-[var(--color-muted)]">
-                        Default sync mode {data.sycamore.lastSyncMode === "initial_backfill" ? "initial backfill" : data.sycamore.lastSyncMode === "incremental" ? "incremental" : data.sycamore.lastSyncMode === "manual_range" ? "manual range" : "not run yet"}.
-                      </p>
-                      {data.sycamore.lastRecordsDiscovered !== null ? (
-                        <p className="mt-2 text-sm text-[var(--color-muted)]">
-                          Last sync discovered {data.sycamore.lastRecordsDiscovered} rows and upserted {data.sycamore.lastRecordsUpserted ?? 0}.
-                        </p>
-                      ) : null}
-                      {data.sycamore.lastSuccessfulWindow ? (
-                        <p className="mt-2 text-sm text-[var(--color-muted)]">
-                          Last successful window {data.sycamore.lastSuccessfulWindow.startDate} to {data.sycamore.lastSuccessfulWindow.endDate}
-                        </p>
-                      ) : null}
-                      {data.sycamore.lastSuccessfulCompletedAt ? (
-                        <p className="mt-2 text-sm text-[var(--color-muted)]">
-                          Last successful sync {new Date(data.sycamore.lastSuccessfulCompletedAt).toLocaleString()}
-                        </p>
-                      ) : null}
-                      {data.sycamore.lastFailedAt ? (
-                        <p className="mt-2 text-sm text-[var(--color-muted)]">
-                          Last failed sync {new Date(data.sycamore.lastFailedAt).toLocaleString()}
-                        </p>
-                      ) : null}
-                    </div>
-                    <StatusBadge tone={data.sycamore.failedSyncs > 0 ? "warning" : "success"}>
-                      {data.sycamore.failedSyncs > 0 ? "needs attention" : "stable"}
-                    </StatusBadge>
-                  </div>
-                </Panel>
               ) : null}
             </Panel>
 

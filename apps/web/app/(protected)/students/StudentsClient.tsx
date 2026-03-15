@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -24,7 +25,7 @@ import {
   Select,
   SoftPanel,
   StatusBadge,
-  Textarea,
+  buttonStyles,
   tableCellClassName,
   tableClassName,
   tableHeadCellClassName,
@@ -410,8 +411,6 @@ export function StudentsClient({
   const [isLoading, setIsLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isUpdatingIntervention, setIsUpdatingIntervention] = useState<string | null>(null);
-  const [isUpdatingNotification, setIsUpdatingNotification] = useState<string | null>(null);
-  const [draftEdits, setDraftEdits] = useState<Record<string, { subject: string; body: string }>>({});
   const [error, setError] = useState<string | null>(null);
 
   const loadStudents = useCallback(async (nextFilters: typeof appliedFilters) => {
@@ -512,26 +511,6 @@ export function StudentsClient({
     void loadDetail();
   }, [appliedFilters.sourceType, pageMode, selectedStudentId]);
 
-  useEffect(() => {
-    if (!detail) {
-      setDraftEdits({});
-      return;
-    }
-    setDraftEdits((current) => {
-      const next = { ...current };
-      for (const notification of detail.notifications) {
-        if (notification.kind !== "parent_outreach") {
-          continue;
-        }
-        next[notification.id] = {
-          subject: notification.draftSubject ?? "",
-          body: notification.draftBody ?? ""
-        };
-      }
-      return next;
-    });
-  }, [detail]);
-
   async function refreshDetail() {
     if (!selectedStudentId) {
       return;
@@ -563,69 +542,6 @@ export function StudentsClient({
     await refreshDetail();
     await loadStudents(appliedFilters);
     setIsUpdatingIntervention(null);
-  }
-
-  async function saveParentOutreachDraft(notificationId: string) {
-    const draft = draftEdits[notificationId];
-    if (!draft) {
-      return;
-    }
-    setIsUpdatingNotification(notificationId);
-    const response = await fetch("/api/notifications/parent-outreach/update-draft", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        notificationId,
-        subject: draft.subject,
-        body: draft.body
-      })
-    });
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    if (!response.ok) {
-      setError(body?.error || "Failed to update parent outreach draft.");
-      setIsUpdatingNotification(null);
-      return;
-    }
-    await refreshDetail();
-    setIsUpdatingNotification(null);
-  }
-
-  async function approveParentOutreachDraft(notificationId: string) {
-    setIsUpdatingNotification(notificationId);
-    const response = await fetch("/api/notifications/parent-outreach/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notificationIds: [notificationId] })
-    });
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    if (!response.ok) {
-      setError(body?.error || "Failed to approve parent outreach draft.");
-      setIsUpdatingNotification(null);
-      return;
-    }
-    await refreshDetail();
-    await loadStudents(appliedFilters);
-    setIsUpdatingNotification(null);
-  }
-
-  async function suppressParentOutreachDraft(notificationId: string) {
-    setIsUpdatingNotification(notificationId);
-    const response = await fetch("/api/notifications/parent-outreach/suppress", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        notificationIds: [notificationId],
-        reason: "Suppressed during case-file review."
-      })
-    });
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    if (!response.ok) {
-      setError(body?.error || "Failed to suppress parent outreach draft.");
-      setIsUpdatingNotification(null);
-      return;
-    }
-    await refreshDetail();
-    setIsUpdatingNotification(null);
   }
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
@@ -1261,19 +1177,29 @@ export function StudentsClient({
 
               {detailTab === "notifications" ? (
                 <div className="grid gap-4">
-                  {detail.notifications.length === 0 ? (
+                  {detail.notifications.length === 0 && detail.guardianContacts.length === 0 ? (
                     <EmptyState
-                      title="No notifications yet"
-                      description="Queued and sent notifications for this student will appear here once actions are dispatched."
+                      title="No notification context yet"
+                      description="Guardian coverage and outreach history will appear here once this student starts moving through the notification workflow."
                     />
                   ) : (
                     <>
                       <SoftPanel className="space-y-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-semibold text-[var(--color-ink)]">Guardian contacts</p>
-                          <StatusBadge tone={detail.guardianContacts.some((contact) => contact.email && contact.isActive) ? "success" : "warning"}>
-                            {detail.guardianContacts.filter((contact) => contact.email && contact.isActive).length} email-ready
-                          </StatusBadge>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="space-y-1">
+                            <p className="font-semibold text-[var(--color-ink)]">Guardian coverage</p>
+                            <p className="text-sm leading-6 text-[var(--color-muted)]">
+                              Read-only contact context for this student. Manage guardian records and outreach operations in Notifications.
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StatusBadge tone={(caseFileSummary?.emailEnabledGuardians ?? 0) > 0 ? "success" : "warning"}>
+                              {caseFileSummary?.emailEnabledGuardians ?? 0} email-ready
+                            </StatusBadge>
+                            <Link href="/notifications" className={buttonStyles({ variant: "secondary", size: "sm" })}>
+                              Open Notifications
+                            </Link>
+                          </div>
                         </div>
                         {detail.guardianContacts.length === 0 ? (
                           <p className="text-sm text-[var(--color-muted)]">
@@ -1281,7 +1207,7 @@ export function StudentsClient({
                           </p>
                         ) : (
                           <div className="grid gap-3">
-                            {detail.guardianContacts.map((contact) => (
+                            {detail.guardianContacts.slice(0, 3).map((contact) => (
                               <div
                                 key={contact.id}
                                 className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/80 px-4 py-3"
@@ -1307,11 +1233,22 @@ export function StudentsClient({
                             ))}
                           </div>
                         )}
+                        {detail.guardianContacts.length > 3 ? (
+                          <p className="text-sm text-[var(--color-muted)]">
+                            {detail.guardianContacts.length - 3} more contact
+                            {detail.guardianContacts.length - 3 === 1 ? "" : "s"} are available in Notifications.
+                          </p>
+                        ) : null}
                       </SoftPanel>
 
                       <SoftPanel className="space-y-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="font-semibold text-[var(--color-ink)]">Parent outreach</p>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="space-y-1">
+                            <p className="font-semibold text-[var(--color-ink)]">Parent outreach</p>
+                            <p className="text-sm leading-6 text-[var(--color-muted)]">
+                              This case file shows outreach state only. Drafting, approval, and suppression now happen in Notifications.
+                            </p>
+                          </div>
                           <StatusBadge tone={parentOutreachNotifications.length > 0 ? "warning" : "neutral"}>
                             {parentOutreachNotifications.length} rows
                           </StatusBadge>
@@ -1346,74 +1283,12 @@ export function StudentsClient({
                                 </p>
                               ) : null}
 
-                              {notification.status === "sent" || notification.status === "suppressed" ? (
-                                <>
-                                  <p className="text-sm font-semibold text-[var(--color-ink)]">
-                                    {draftEdits[notification.id]?.subject || notification.draftSubject || "No subject"}
-                                  </p>
-                                  <p className="text-sm leading-7 text-[var(--color-muted)] whitespace-pre-wrap">
-                                    {draftEdits[notification.id]?.body || notification.draftBody || "No draft body"}
-                                  </p>
-                                </>
-                              ) : (
-                                <>
-                                  <Field label="Draft subject">
-                                    <Input
-                                      value={draftEdits[notification.id]?.subject ?? notification.draftSubject ?? ""}
-                                      onChange={(event) =>
-                                        setDraftEdits((current) => ({
-                                          ...current,
-                                          [notification.id]: {
-                                            subject: event.currentTarget.value,
-                                            body: current[notification.id]?.body ?? notification.draftBody ?? ""
-                                          }
-                                        }))
-                                      }
-                                    />
-                                  </Field>
-                                  <Field label="Draft body">
-                                    <Textarea
-                                      rows={6}
-                                      value={draftEdits[notification.id]?.body ?? notification.draftBody ?? ""}
-                                      onChange={(event) =>
-                                        setDraftEdits((current) => ({
-                                          ...current,
-                                          [notification.id]: {
-                                            subject: current[notification.id]?.subject ?? notification.draftSubject ?? "",
-                                            body: event.currentTarget.value
-                                          }
-                                        }))
-                                      }
-                                    />
-                                  </Field>
-                                  <div className="flex flex-wrap gap-3">
-                                    <Button
-                                      type="button"
-                                      variant="secondary"
-                                      disabled={isUpdatingNotification === notification.id}
-                                      onClick={() => void saveParentOutreachDraft(notification.id)}
-                                    >
-                                      Save draft
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="primary"
-                                      disabled={isUpdatingNotification === notification.id}
-                                      onClick={() => void approveParentOutreachDraft(notification.id)}
-                                    >
-                                      Approve draft
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      disabled={isUpdatingNotification === notification.id}
-                                      onClick={() => void suppressParentOutreachDraft(notification.id)}
-                                    >
-                                      Suppress
-                                    </Button>
-                                  </div>
-                                </>
-                              )}
+                              <p className="text-sm font-semibold text-[var(--color-ink)]">
+                                {notification.draftSubject || "No subject"}
+                              </p>
+                              <p className="text-sm leading-7 text-[var(--color-muted)] whitespace-pre-wrap">
+                                {notification.draftBody || "No draft body"}
+                              </p>
                             </div>
                           ))
                         )}
