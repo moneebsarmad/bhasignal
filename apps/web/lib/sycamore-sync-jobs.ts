@@ -1,6 +1,8 @@
+import type { AuditEvent } from "@syc/domain";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createSupabaseServerClient } from "@/lib/supabase-server-client";
+import { createStorageAdapter } from "@/lib/storage";
 import {
   createSupabaseSycamoreStore,
   type SycamoreSyncMode,
@@ -136,6 +138,10 @@ interface SycamoreSyncJobStore {
   updateRunningSyncJob(id: string, patch: UpdateRunningSyncJobInput): Promise<void>;
   completeSyncJob(id: string, patch: CompleteSyncJobInput): Promise<void>;
   failSyncJob(id: string, patch: { errorMessage: string; warnings?: string[] }): Promise<void>;
+}
+
+interface SycamoreAuditSink {
+  append(event: AuditEvent): Promise<void>;
 }
 
 type RowRecord = Record<string, unknown>;
@@ -396,10 +402,166 @@ function createDefaultJobStore(): SycamoreSyncJobStore {
   return createSupabaseSycamoreSyncJobStore(createSupabaseServerClient());
 }
 
+function createDefaultAuditSink(): SycamoreAuditSink {
+  return createStorageAdapter().auditEvents;
+}
+
 function staleBeforeIso(nowIso: string, minutesAgo = staleAfterMinutes()): string {
   const stale = new Date(nowIso);
   stale.setUTCMinutes(stale.getUTCMinutes() - minutesAgo);
   return stale.toISOString();
+}
+
+function defaultAuditActor(triggeredBy: "manual" | "cron", actorEmail?: string): string {
+  if (actorEmail?.trim()) {
+    return actorEmail.trim().toLowerCase();
+  }
+  return triggeredBy === "cron" ? "system:cron" : "system:sycamore";
+}
+
+function createAuditEvent(input: {
+  eventType: string;
+  entityType: string;
+  entityId: string;
+  actor: string;
+  payload: unknown;
+}): AuditEvent {
+  return {
+    id: crypto.randomUUID(),
+    eventType: input.eventType,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    actor: input.actor,
+    payloadJson: JSON.stringify(input.payload),
+    createdAt: new Date().toISOString()
+  };
+}
+
+async function appendAuditEventSafe(auditSink: SycamoreAuditSink, event: AuditEvent): Promise<void> {
+  try {
+    await auditSink.append(event);
+  } catch (error) {
+    console.error("Failed to append Sycamore async audit event.", error);
+  }
+}
+
+function batchTerminalEventType(summary: SycamoreSyncBatchSummary): string | null {
+  if (summary.status === "success" || summary.status === "partial") {
+    return "sycamore_sync_batch_completed";
+  }
+  if (summary.status === "failed") {
+    return "sycamore_sync_batch_failed";
+  }
+  return null;
+}
+
+function createBatchQueuedAuditEvent(input: {
+  batch: SycamoreSyncBatchSummary;
+  jobs: SycamoreSyncJobRecord[];
+  request: SycamoreDirectSyncRequest;
+  actor: string;
+}): AuditEvent {
+  return createAuditEvent({
+    eventType: "sycamore_sync_batch_queued",
+    entityType: "sycamore_sync_batch",
+    entityId: input.batch.batchId,
+    actor: input.actor,
+    payload: {
+      triggeredBy: input.batch.triggeredBy,
+      syncMode: input.batch.syncMode,
+      totalChunks: input.batch.totalChunks,
+      chunkSizeDays: input.batch.chunkSizeDays,
+      overallWindow: input.batch.overallWindow,
+      currentWindow: input.batch.currentWindow,
+      request: input.request,
+      jobs: input.jobs.map((job) => ({
+        id: job.id,
+        sequenceIndex: job.sequenceIndex,
+        window: job.window
+      }))
+    }
+  });
+}
+
+function createJobStartedAuditEvent(input: {
+  job: SycamoreSyncJobRecord;
+  actor: string;
+}): AuditEvent {
+  return createAuditEvent({
+    eventType: "sycamore_sync_job_started",
+    entityType: "sycamore_sync_job",
+    entityId: input.job.id,
+    actor: input.actor,
+    payload: {
+      batchId: input.job.batchId,
+      sequenceIndex: input.job.sequenceIndex,
+      totalJobs: input.job.totalJobs,
+      triggeredBy: input.job.triggeredBy,
+      syncMode: input.job.syncMode,
+      window: input.job.window,
+      attemptCount: input.job.attemptCount,
+      startedAt: input.job.startedAt,
+      request: input.job.requestPayload
+    }
+  });
+}
+
+function createJobFinishedAuditEvent(input: {
+  job: SycamoreSyncJobRecord;
+  actor: string;
+}): AuditEvent {
+  return createAuditEvent({
+    eventType: input.job.resultStatus === "failed" ? "sycamore_sync_job_failed" : "sycamore_sync_job_completed",
+    entityType: "sycamore_sync_job",
+    entityId: input.job.id,
+    actor: input.actor,
+    payload: {
+      batchId: input.job.batchId,
+      sequenceIndex: input.job.sequenceIndex,
+      totalJobs: input.job.totalJobs,
+      triggeredBy: input.job.triggeredBy,
+      syncMode: input.job.syncMode,
+      window: input.job.window,
+      status: input.job.resultStatus ?? input.job.status,
+      syncLogId: input.job.syncLogId,
+      recordsDiscovered: input.job.recordsDiscovered,
+      recordsUpserted: input.job.recordsUpserted,
+      warnings: input.job.warnings,
+      errorMessage: input.job.errorMessage,
+      startedAt: input.job.startedAt,
+      completedAt: input.job.completedAt
+    }
+  });
+}
+
+function createBatchFinishedAuditEvent(input: {
+  batch: SycamoreSyncBatchSummary;
+  actor: string;
+}): AuditEvent | null {
+  const eventType = batchTerminalEventType(input.batch);
+  if (!eventType) {
+    return null;
+  }
+
+  return createAuditEvent({
+    eventType,
+    entityType: "sycamore_sync_batch",
+    entityId: input.batch.batchId,
+    actor: input.actor,
+    payload: {
+      triggeredBy: input.batch.triggeredBy,
+      syncMode: input.batch.syncMode,
+      status: input.batch.status,
+      overallWindow: input.batch.overallWindow,
+      totalChunks: input.batch.totalChunks,
+      completedChunks: input.batch.completedChunks,
+      failedChunks: input.batch.failedChunks,
+      recordsDiscovered: input.batch.recordsDiscovered,
+      recordsUpserted: input.batch.recordsUpserted,
+      warnings: input.batch.warnings,
+      completedAt: input.batch.completedAt
+    }
+  });
 }
 
 export function createSupabaseSycamoreSyncJobStore(client: SupabaseClient): SycamoreSyncJobStore {
@@ -628,11 +790,14 @@ export async function listRecentSycamoreSyncBatches(input?: {
 export async function enqueueSycamoreSyncBatch(input: {
   request?: SycamoreDirectSyncRequest;
   triggeredBy: "manual" | "cron";
+  actorEmail?: string;
   syncStore?: SycamoreStore;
   jobStore?: SycamoreSyncJobStore;
+  auditSink?: SycamoreAuditSink;
 }): Promise<EnqueueSycamoreSyncBatchResult> {
   const syncStore = input.syncStore ?? createDefaultSyncStore();
   const jobStore = input.jobStore ?? createDefaultJobStore();
+  const auditSink = input.auditSink ?? createDefaultAuditSink();
   await syncStore.ensureSchema();
   await jobStore.ensureSchema();
 
@@ -672,6 +837,15 @@ export async function enqueueSycamoreSyncBatch(input: {
   if (!batch) {
     throw new Error("Could not build the queued Sycamore sync batch.");
   }
+  await appendAuditEventSafe(
+    auditSink,
+    createBatchQueuedAuditEvent({
+      batch,
+      jobs,
+      request,
+      actor: defaultAuditActor(input.triggeredBy, input.actorEmail)
+    })
+  );
   return {
     batch,
     jobs,
@@ -682,9 +856,14 @@ export async function enqueueSycamoreSyncBatch(input: {
 export async function runNextQueuedSycamoreSyncJob(input?: {
   syncStore?: SycamoreStore;
   jobStore?: SycamoreSyncJobStore;
+  actorEmail?: string;
+  auditSink?: SycamoreAuditSink;
+  runSync?: typeof runSycamoreDirectSync;
 }): Promise<RunNextSycamoreSyncJobResult> {
   const syncStore = input?.syncStore ?? createDefaultSyncStore();
   const jobStore = input?.jobStore ?? createDefaultJobStore();
+  const auditSink = input?.auditSink ?? createDefaultAuditSink();
+  const runSync = input?.runSync ?? runSycamoreDirectSync;
   await syncStore.ensureSchema();
   await jobStore.ensureSchema();
 
@@ -697,8 +876,17 @@ export async function runNextQueuedSycamoreSyncJob(input?: {
     };
   }
 
+  const auditActor = defaultAuditActor(job.triggeredBy, input?.actorEmail);
+  await appendAuditEventSafe(
+    auditSink,
+    createJobStartedAuditEvent({
+      job,
+      actor: auditActor
+    })
+  );
+
   try {
-    const result = await runSycamoreDirectSync({
+    const result = await runSync({
       request: job.requestPayload,
       triggeredBy: job.triggeredBy,
       store: syncStore,
@@ -726,20 +914,37 @@ export async function runNextQueuedSycamoreSyncJob(input?: {
       errorMessage: result.status === "failed" ? result.warnings.join("\n") || "Sycamore sync failed." : null
     });
 
+    const completedJob: SycamoreSyncJobRecord = {
+      ...job,
+      status: result.status === "failed" ? "failed" : "succeeded",
+      resultStatus: result.status,
+      syncLogId: result.syncLogId,
+      recordsDiscovered: result.recordsDiscovered,
+      recordsUpserted: result.recordsUpserted,
+      warnings: result.warnings,
+      warningsCount: result.warnings.length,
+      startedAt: job.startedAt ?? result.startedAt,
+      completedAt: result.completedAt,
+      lastHeartbeatAt: result.completedAt,
+      errorMessage: result.status === "failed" ? result.warnings.join("\n") || "Sycamore sync failed." : null
+    };
+    await appendAuditEventSafe(
+      auditSink,
+      createJobFinishedAuditEvent({
+        job: completedJob,
+        actor: auditActor
+      })
+    );
+
+    const batch = await getSycamoreSyncBatchSummary({ batchId: job.batchId, jobStore });
+    const batchFinishedEvent = batch ? createBatchFinishedAuditEvent({ batch, actor: auditActor }) : null;
+    if (batchFinishedEvent) {
+      await appendAuditEventSafe(auditSink, batchFinishedEvent);
+    }
+
     return {
-      job: {
-        ...job,
-        status: result.status === "failed" ? "failed" : "succeeded",
-        resultStatus: result.status,
-        syncLogId: result.syncLogId,
-        recordsDiscovered: result.recordsDiscovered,
-        recordsUpserted: result.recordsUpserted,
-        warnings: result.warnings,
-        warningsCount: result.warnings.length,
-        completedAt: result.completedAt,
-        lastHeartbeatAt: result.completedAt
-      },
-      batch: await getSycamoreSyncBatchSummary({ batchId: job.batchId, jobStore }),
+      job: completedJob,
+      batch,
       executed: true
     };
   } catch (error) {
@@ -747,14 +952,27 @@ export async function runNextQueuedSycamoreSyncJob(input?: {
     await jobStore.failSyncJob(job.id, {
       errorMessage: message
     });
+    const failedJob: SycamoreSyncJobRecord = {
+      ...job,
+      status: "failed",
+      resultStatus: "failed",
+      errorMessage: message
+    };
+    await appendAuditEventSafe(
+      auditSink,
+      createJobFinishedAuditEvent({
+        job: failedJob,
+        actor: auditActor
+      })
+    );
+    const batch = await getSycamoreSyncBatchSummary({ batchId: job.batchId, jobStore });
+    const batchFinishedEvent = batch ? createBatchFinishedAuditEvent({ batch, actor: auditActor }) : null;
+    if (batchFinishedEvent) {
+      await appendAuditEventSafe(auditSink, batchFinishedEvent);
+    }
     return {
-      job: {
-        ...job,
-        status: "failed",
-        resultStatus: "failed",
-        errorMessage: message
-      },
-      batch: await getSycamoreSyncBatchSummary({ batchId: job.batchId, jobStore }),
+      job: failedJob,
+      batch,
       executed: true
     };
   }

@@ -3,6 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/session";
 import { createStorageAdapter } from "@/lib/storage";
 
+function startOfDayUtc(date: string): number {
+  return Date.parse(`${date}T00:00:00.000Z`);
+}
+
+function endOfDayUtc(date: string): number {
+  return Date.parse(`${date}T23:59:59.999Z`);
+}
+
 export async function GET(request: NextRequest) {
   const session = getCurrentSession();
   if (!session) {
@@ -35,8 +43,8 @@ export async function GET(request: NextRequest) {
     events = events.filter((event) => event.actor === actor);
   }
 
-  const fromEpoch = from ? Date.parse(from) : Number.NaN;
-  const toEpoch = to ? Date.parse(to) : Number.NaN;
+  const fromEpoch = from ? startOfDayUtc(from) : Number.NaN;
+  const toEpoch = to ? endOfDayUtc(to) : Number.NaN;
   if (!Number.isNaN(fromEpoch)) {
     events = events.filter((event) => Date.parse(event.createdAt) >= fromEpoch);
   }

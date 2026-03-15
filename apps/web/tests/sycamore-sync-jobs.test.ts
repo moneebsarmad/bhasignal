@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import type { AuditEvent } from "@syc/domain";
 import type { SycamoreStore } from "../lib/sycamore-direct-store";
 import type { SycamoreSyncProgressSnapshot } from "../lib/sycamore-direct-sync";
 import {
   enqueueSycamoreSyncBatch,
+  runNextQueuedSycamoreSyncJob,
   summarizeSycamoreSyncBatch,
   type SycamoreSyncJobRecord
 } from "../lib/sycamore-sync-jobs";
@@ -249,7 +251,7 @@ test("summarizeSycamoreSyncBatch flags stale running jobs from heartbeat age", (
 
 test("enqueueSycamoreSyncBatch splits wide manual ranges into queued windows", async () => {
   const createdJobs: SycamoreSyncJobRecord[] = [];
-  const jobStore = {
+  const jobStore: NonNullable<Parameters<typeof runNextQueuedSycamoreSyncJob>[0]>["jobStore"] = {
     async ensureSchema() {},
     async createSyncJobs(
       inputs: Array<{
@@ -293,7 +295,13 @@ test("enqueueSycamoreSyncBatch splits wide manual ranges into queued windows", a
     async claimNextSyncJob() {
       return null;
     },
-    async updateRunningSyncJob() {},
+    async updateRunningSyncJob(_id: string, _patch: {
+      syncLogId?: string | null;
+      progress?: unknown;
+      recordsDiscovered?: number;
+      recordsUpserted?: number;
+      warnings?: string[];
+    }) {},
     async completeSyncJob() {},
     async failSyncJob() {}
   } as Parameters<typeof enqueueSycamoreSyncBatch>[0]["jobStore"];
@@ -491,4 +499,198 @@ test("enqueueSycamoreSyncBatch reuses the active batch instead of queuing a dupl
   assert.equal(result.batch.batchId, "batch_active");
   assert.equal(result.batch.status, "running");
   assert.equal(result.jobs.length, 2);
+});
+
+test("enqueueSycamoreSyncBatch appends an audit event for the queued batch", async () => {
+  const createdJobs: SycamoreSyncJobRecord[] = [];
+  const auditEvents: AuditEvent[] = [];
+  const jobStore = {
+    async ensureSchema() {},
+    async createSyncJobs(
+      inputs: Array<{
+        batchId: string;
+        sequenceIndex: number;
+        totalJobs: number;
+        triggeredBy: "manual" | "cron";
+        requestPayload: { startDate?: string; endDate?: string; incremental?: boolean };
+        syncMode: "initial_backfill" | "incremental" | "manual_range";
+        windowStartDate: string;
+        windowEndDate: string;
+      }>
+    ) {
+      const rows = inputs.map((input) =>
+        makeJob({
+          id: `job_batch_audit_${input.sequenceIndex + 1}`,
+          batchId: input.batchId,
+          sequenceIndex: input.sequenceIndex,
+          totalJobs: input.totalJobs,
+          triggeredBy: input.triggeredBy,
+          requestPayload: input.requestPayload,
+          syncMode: input.syncMode,
+          window: {
+            startDate: input.windowStartDate,
+            endDate: input.windowEndDate
+          }
+        })
+      );
+      createdJobs.push(...rows);
+      return rows;
+    },
+    async listSyncJobs() {
+      return [];
+    },
+    async listSyncJobsByBatch(batchId: string) {
+      return createdJobs.filter((job) => job.batchId === batchId);
+    },
+    async listActiveSyncJobs() {
+      return [];
+    },
+    async claimNextSyncJob() {
+      return null;
+    },
+    async updateRunningSyncJob() {},
+    async completeSyncJob() {},
+    async failSyncJob() {}
+  } as Parameters<typeof enqueueSycamoreSyncBatch>[0]["jobStore"];
+
+  const result = await enqueueSycamoreSyncBatch({
+    request: {
+      startDate: "2026-03-01",
+      endDate: "2026-03-05"
+    },
+    triggeredBy: "manual",
+    actorEmail: "admin@school.org",
+    syncStore: createMinimalSyncStore(),
+    jobStore,
+    auditSink: {
+      async append(event) {
+        auditEvents.push(event);
+      }
+    }
+  });
+
+  assert.equal(auditEvents.length, 1);
+  assert.equal(auditEvents[0]?.eventType, "sycamore_sync_batch_queued");
+  assert.equal(auditEvents[0]?.entityType, "sycamore_sync_batch");
+  assert.equal(auditEvents[0]?.entityId, result.batch.batchId);
+  assert.equal(auditEvents[0]?.actor, "admin@school.org");
+  assert.match(auditEvents[0]?.payloadJson ?? "", /"totalChunks":2/);
+});
+
+test("runNextQueuedSycamoreSyncJob appends start, completion, and final batch audit events", async () => {
+  const auditEvents: AuditEvent[] = [];
+  const claimedJob = makeJob({
+    id: "job_run_1",
+    batchId: "batch_run_1",
+    sequenceIndex: 0,
+    totalJobs: 1,
+    triggeredBy: "manual",
+    requestPayload: {
+      startDate: "2026-03-01",
+      endDate: "2026-03-03"
+    },
+    syncMode: "manual_range",
+    window: {
+      startDate: "2026-03-01",
+      endDate: "2026-03-03"
+    },
+    status: "running",
+    attemptCount: 1,
+    startedAt: "2026-03-20T12:00:00.000Z",
+    lastHeartbeatAt: "2026-03-20T12:00:00.000Z"
+  });
+
+  let completedJob = claimedJob;
+  const jobStore = {
+    async ensureSchema() {},
+    async createSyncJobs() {
+      return [];
+    },
+    async listSyncJobs() {
+      return [completedJob];
+    },
+    async listSyncJobsByBatch(batchId: string) {
+      return batchId === completedJob.batchId ? [completedJob] : [];
+    },
+    async listActiveSyncJobs() {
+      return completedJob.status === "queued" || completedJob.status === "running" ? [completedJob] : [];
+    },
+    async claimNextSyncJob() {
+      return claimedJob;
+    },
+    async updateRunningSyncJob() {},
+    async completeSyncJob(
+      id: string,
+      patch: {
+        syncLogId?: string | null;
+        resultStatus: "success" | "partial" | "failed";
+        recordsDiscovered: number;
+        recordsUpserted: number;
+        warnings: string[];
+        completedAt: string;
+        errorMessage?: string | null;
+      }
+    ) {
+      completedJob = {
+        ...completedJob,
+        id,
+        status: patch.resultStatus === "failed" ? "failed" : "succeeded",
+        resultStatus: patch.resultStatus,
+        syncLogId: patch.syncLogId ?? null,
+        recordsDiscovered: patch.recordsDiscovered,
+        recordsUpserted: patch.recordsUpserted,
+        warnings: patch.warnings,
+        warningsCount: patch.warnings.length,
+        completedAt: patch.completedAt,
+        lastHeartbeatAt: patch.completedAt,
+        errorMessage: patch.errorMessage ?? null
+      };
+    },
+    async failSyncJob() {
+      throw new Error("Should not fail in this test.");
+    }
+  };
+
+  const result = await runNextQueuedSycamoreSyncJob({
+    actorEmail: "admin@school.org",
+    syncStore: createMinimalSyncStore(),
+    jobStore,
+    auditSink: {
+      async append(event) {
+        auditEvents.push(event);
+      }
+    },
+    runSync: async () => ({
+      syncLogId: "sync_log_1",
+      status: "success",
+      syncMode: "manual_range",
+      window: {
+        startDate: "2026-03-01",
+        endDate: "2026-03-03"
+      },
+      recordsDiscovered: 6,
+      recordsUpserted: 6,
+      warnings: [],
+      rosterSync: {
+        attempted: true,
+        fetchedStudents: 12,
+        upsertedStudents: 12,
+        linkedStudents: 12,
+        linkedDisciplineLogs: 0
+      },
+      startedAt: "2026-03-20T12:00:00.000Z",
+      completedAt: "2026-03-20T12:04:00.000Z",
+      triggeredBy: "manual"
+    })
+  });
+
+  assert.equal(result.executed, true);
+  assert.equal(result.job?.status, "succeeded");
+  assert.deepEqual(
+    auditEvents.map((event) => event.eventType),
+    ["sycamore_sync_job_started", "sycamore_sync_job_completed", "sycamore_sync_batch_completed"]
+  );
+  assert.equal(auditEvents.every((event) => event.actor === "admin@school.org"), true);
+  assert.equal(auditEvents[0]?.entityType, "sycamore_sync_job");
+  assert.equal(auditEvents[2]?.entityType, "sycamore_sync_batch");
 });

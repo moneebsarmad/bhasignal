@@ -34,7 +34,9 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await runNextQueuedSycamoreSyncJob();
+    const result = await runNextQueuedSycamoreSyncJob({
+      actorEmail: "system:cron"
+    });
     return NextResponse.json(
       {
         executed: result.executed,
@@ -54,8 +56,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const session = getCurrentSession();
+
   try {
-    const result = await runNextQueuedSycamoreSyncJob();
+    const result = await runNextQueuedSycamoreSyncJob({
+      actorEmail: session?.email ?? "system:sycamore"
+    });
     return NextResponse.json(
       {
         executed: result.executed,

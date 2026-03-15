@@ -40,9 +40,12 @@ export async function GET(request: NextRequest) {
 
   try {
     const queued = await enqueueSycamoreSyncBatch({
-      triggeredBy: "cron"
+      triggeredBy: "cron",
+      actorEmail: "system:cron"
     });
-    const executed = await runNextQueuedSycamoreSyncJob();
+    const executed = await runNextQueuedSycamoreSyncJob({
+      actorEmail: "system:cron"
+    });
     return NextResponse.json(
       {
         sycamoreSync: executed.batch ?? queued.batch,
@@ -79,7 +82,8 @@ export async function POST(request: NextRequest) {
   try {
     const result = await enqueueSycamoreSyncBatch({
       request: parsed.data,
-      triggeredBy: "manual"
+      triggeredBy: "manual",
+      actorEmail: session.email
     });
     return NextResponse.json(
       {

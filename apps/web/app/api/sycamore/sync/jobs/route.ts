@@ -54,7 +54,8 @@ export async function POST(request: NextRequest) {
   try {
     const result = await enqueueSycamoreSyncBatch({
       request: body,
-      triggeredBy: "manual"
+      triggeredBy: "manual",
+      actorEmail: session.email
     });
     return NextResponse.json(
       {
