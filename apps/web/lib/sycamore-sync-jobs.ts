@@ -74,8 +74,13 @@ export interface SycamoreSyncBatchSummary {
   recordsUpserted: number;
   warnings: string[];
   warningsCount: number;
-  startedAt: string;
+  createdAt: string;
+  startedAt: string | null;
   completedAt: string | null;
+  activeJobStartedAt: string | null;
+  lastHeartbeatAt: string | null;
+  staleAfterMinutes: number;
+  isStalled: boolean;
   triggeredBy: "manual" | "cron";
   progress: SycamoreSyncProgressSnapshot | null;
 }
@@ -290,11 +295,18 @@ function chunkSizeDays(jobs: SycamoreSyncJobRecord[]): number {
   return Math.max(...jobs.map((job) => inclusiveDaySpan(job.window.startDate, job.window.endDate)), 1);
 }
 
-export function summarizeSycamoreSyncBatch(jobs: SycamoreSyncJobRecord[]): SycamoreSyncBatchSummary | null {
+export function summarizeSycamoreSyncBatch(
+  jobs: SycamoreSyncJobRecord[],
+  options?: {
+    nowIso?: string;
+  }
+): SycamoreSyncBatchSummary | null {
   if (jobs.length === 0) {
     return null;
   }
 
+  const nowIso = options?.nowIso ?? new Date().toISOString();
+  const staleMinutes = staleAfterMinutes();
   const sorted = [...jobs].sort((left, right) => left.sequenceIndex - right.sequenceIndex || left.createdAt.localeCompare(right.createdAt));
   const totalChunks = sorted.length;
   const completedChunks = sorted.filter((job) => job.status === "succeeded" || job.status === "failed").length;
@@ -312,8 +324,12 @@ export function summarizeSycamoreSyncBatch(jobs: SycamoreSyncJobRecord[]): Sycam
         : resultStatuses.includes("partial")
           ? "partial"
           : "success";
+  const createdAt = sorted.map((job) => job.createdAt).sort((left, right) => left.localeCompare(right))[0] ?? sorted[0]!.createdAt;
   const startedAt =
-    sorted.map((job) => job.startedAt ?? job.createdAt).sort((left, right) => left.localeCompare(right))[0] ?? sorted[0]!.createdAt;
+    sorted
+      .map((job) => job.startedAt)
+      .filter((value): value is string => Boolean(value))
+      .sort((left, right) => left.localeCompare(right))[0] ?? null;
   const completedAt =
     completedChunks === totalChunks
       ? [...sorted]
@@ -321,6 +337,9 @@ export function summarizeSycamoreSyncBatch(jobs: SycamoreSyncJobRecord[]): Sycam
           .filter((value): value is string => Boolean(value))
           .sort((left, right) => right.localeCompare(left))[0] ?? null
       : null;
+  const activeJobStartedAt = activeJob?.startedAt ?? null;
+  const lastHeartbeatAt = activeJob?.lastHeartbeatAt ?? activeJob?.startedAt ?? null;
+  const isStalled = Boolean(runningJob && lastHeartbeatAt && lastHeartbeatAt < staleBeforeIso(nowIso, staleMinutes));
 
   return {
     batchId: sorted[0]!.batchId,
@@ -345,8 +364,13 @@ export function summarizeSycamoreSyncBatch(jobs: SycamoreSyncJobRecord[]): Sycam
     recordsUpserted: sorted.reduce((total, job) => total + job.recordsUpserted, 0),
     warnings: sorted.flatMap((job) => job.warnings),
     warningsCount: sorted.reduce((total, job) => total + job.warningsCount, 0),
+    createdAt,
     startedAt,
     completedAt,
+    activeJobStartedAt,
+    lastHeartbeatAt,
+    staleAfterMinutes: staleMinutes,
+    isStalled,
     triggeredBy: sorted[0]!.triggeredBy,
     progress: runningJob?.progress ?? null
   };
@@ -372,9 +396,9 @@ function createDefaultJobStore(): SycamoreSyncJobStore {
   return createSupabaseSycamoreSyncJobStore(createSupabaseServerClient());
 }
 
-function staleBeforeIso(nowIso: string): string {
+function staleBeforeIso(nowIso: string, minutesAgo = staleAfterMinutes()): string {
   const stale = new Date(nowIso);
-  stale.setUTCMinutes(stale.getUTCMinutes() - staleAfterMinutes());
+  stale.setUTCMinutes(stale.getUTCMinutes() - minutesAgo);
   return stale.toISOString();
 }
 
@@ -597,7 +621,7 @@ export async function listRecentSycamoreSyncBatches(input?: {
   return [...byBatchId.values()]
     .map((batchJobs) => summarizeSycamoreSyncBatch(batchJobs))
     .filter((value): value is SycamoreSyncBatchSummary => Boolean(value))
-    .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+    .sort((left, right) => (right.startedAt ?? right.createdAt).localeCompare(left.startedAt ?? left.createdAt))
     .slice(0, limit);
 }
 

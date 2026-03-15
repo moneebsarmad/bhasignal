@@ -55,8 +55,13 @@ interface SycamoreSyncBatch {
   recordsUpserted: number;
   warnings: string[];
   warningsCount: number;
-  startedAt: string;
+  createdAt: string;
+  startedAt: string | null;
   completedAt: string | null;
+  activeJobStartedAt: string | null;
+  lastHeartbeatAt: string | null;
+  staleAfterMinutes: number;
+  isStalled: boolean;
   triggeredBy: string;
   progress: SycamoreSyncProgressSnapshot | null;
 }
@@ -218,6 +223,10 @@ function formatDuration(startedAt: string, nowValue: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function formatBatchTimestamp(batch: SycamoreSyncBatch): string {
+  return new Date(batch.startedAt ?? batch.createdAt).toLocaleString();
 }
 
 function syncStageSubtitle(progress: SycamoreSyncProgressSnapshot, stage: (typeof syncStageKeys)[number]): string {
@@ -637,8 +646,25 @@ export function IngestionClient() {
   const flaggedRows = jobs.reduce((total, job) => total + job.rowsFlagged, 0);
   const selectedRangeDays = inclusiveDaySpan(syncStartDate, syncEndDate);
   const willChunkSelectedRange = selectedRangeDays > MAX_SYNC_WINDOW_DAYS;
-  const syncStartedAt = syncBatch?.startedAt ?? syncProgress?.startedAt ?? null;
-  const syncElapsed = syncStartedAt ? formatDuration(syncStartedAt, syncNow) : null;
+  const syncQueuedAt = syncBatch?.createdAt ?? null;
+  const syncStartedAt = syncBatch?.activeJobStartedAt ?? syncProgress?.startedAt ?? null;
+  const syncElapsedLabel =
+    syncBatch?.status === "queued"
+      ? syncQueuedAt
+        ? `${formatDuration(syncQueuedAt, syncNow)} in queue`
+        : null
+      : syncBatch?.status === "running"
+        ? syncStartedAt
+          ? `${formatDuration(syncStartedAt, syncNow)} elapsed`
+          : null
+        : null;
+  const syncHeartbeatLabel =
+    syncBatch?.status === "running" && syncBatch.lastHeartbeatAt
+      ? syncBatch.isStalled
+        ? `No heartbeat for ${formatDuration(syncBatch.lastHeartbeatAt, syncNow)}`
+        : `Heartbeat ${formatDuration(syncBatch.lastHeartbeatAt, syncNow)} ago`
+      : null;
+  const canRunWorkerNow = Boolean(syncBatch && (syncBatch.status === "queued" || syncBatch.isStalled));
   const batchOverallProgress = syncBatch
     ? Math.min(
         1,
@@ -649,34 +675,40 @@ export function IngestionClient() {
     : null;
   const displayedOverallProgress = batchOverallProgress ?? syncProgress?.overallProgress ?? 0;
   const syncStageLabel =
-    syncProgress?.stageLabel ??
-    (syncBatch?.status === "queued"
-      ? "Queued"
-      : syncBatch?.status === "failed"
-        ? "Failed"
-        : syncBatch?.status === "success" || syncBatch?.status === "partial"
-          ? "Completed"
-          : "Starting");
+    syncBatch?.isStalled ?
+      "Stalled"
+    : (syncProgress?.stageLabel ??
+        (syncBatch?.status === "queued"
+          ? "Queued"
+          : syncBatch?.status === "failed"
+            ? "Failed"
+            : syncBatch?.status === "success" || syncBatch?.status === "partial"
+              ? "Completed"
+              : "Starting"));
   const syncStageDescription =
-    syncProgress?.stageDescription ??
-    (syncBatch?.status === "queued"
-      ? "This queued Sycamore sync will run when the daily cron advances the queue, or immediately if you use Run next job now."
-      : syncBatch?.status === "failed"
-        ? "The background Sycamore sync stopped before the batch could finish."
-        : syncBatch?.status === "success" || syncBatch?.status === "partial"
-          ? "The background Sycamore sync batch has finished."
-          : "Preparing the background Sycamore sync.");
+    syncBatch?.isStalled ?
+      `The current background job has not reported a heartbeat for over ${syncBatch.staleAfterMinutes} minutes. It likely hit the 300-second worker limit or the worker was interrupted.`
+    : (syncProgress?.stageDescription ??
+        (syncBatch?.status === "queued"
+          ? "This queued Sycamore sync will run when the daily cron advances the queue, or immediately if you use Run next job now. Queued time does not count against the 300-second worker limit."
+          : syncBatch?.status === "failed"
+            ? "The background Sycamore sync stopped before the batch could finish."
+            : syncBatch?.status === "success" || syncBatch?.status === "partial"
+              ? "The background Sycamore sync batch has finished."
+              : "Preparing the background Sycamore sync."));
   const syncMessage =
-    syncProgress?.message ??
-    (syncBatch?.status === "queued"
-      ? `Queued ${syncBatch.totalChunks} background job${syncBatch.totalChunks === 1 ? "" : "s"} for ${formatSyncWindow(syncBatch.overallWindow)}.`
-      : syncBatch?.status === "failed"
-        ? syncBatch.warnings.join("\n") || "The background Sycamore sync failed."
-        : syncBatch?.status === "success" || syncBatch?.status === "partial"
-          ? `Background sync batch finished with ${syncBatch.recordsUpserted} stored row${syncBatch.recordsUpserted === 1 ? "" : "s"}.`
-          : "Waiting for the queued Sycamore job to report progress.");
+    syncBatch?.isStalled ?
+      `${syncBatch.lastHeartbeatAt ? `Last worker heartbeat was ${formatDuration(syncBatch.lastHeartbeatAt, syncNow)} ago.` : "The worker has not reported a heartbeat recently."} Use Run next job now to resume from the next claimable chunk.`
+    : (syncProgress?.message ??
+        (syncBatch?.status === "queued"
+          ? `Queued ${syncBatch.totalChunks} background job${syncBatch.totalChunks === 1 ? "" : "s"} for ${formatSyncWindow(syncBatch.overallWindow)}.`
+          : syncBatch?.status === "failed"
+            ? syncBatch.warnings.join("\n") || "The background Sycamore sync failed."
+            : syncBatch?.status === "success" || syncBatch?.status === "partial"
+              ? `Background sync batch finished with ${syncBatch.recordsUpserted} stored row${syncBatch.recordsUpserted === 1 ? "" : "s"}.`
+              : "Waiting for the queued Sycamore job to report progress."));
   const syncStatusTone =
-    syncBatch?.status === "failed"
+    syncBatch?.isStalled || syncBatch?.status === "failed"
       ? "danger"
       : syncBatch?.status === "success" || syncBatch?.status === "partial"
         ? "success"
@@ -811,14 +843,16 @@ export function IngestionClient() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                  {syncBatch.status === "queued" ? (
+                  {canRunWorkerNow ? (
                     <Button type="button" variant="secondary" size="sm" disabled={isRunningWorker} onClick={() => void runQueuedSyncJobNow()}>
                       <RefreshCcw className={cn("h-4 w-4", isRunningWorker ? "animate-spin" : "")} />
-                      {isRunningWorker ? "Starting..." : "Run next job now"}
+                      {isRunningWorker ? (syncBatch.isStalled ? "Resuming..." : "Starting...") : syncBatch.isStalled ? "Resume stalled job" : "Run next job now"}
                     </Button>
                   ) : null}
                   <StatusBadge tone={syncStatusTone}>
-                    {syncBatch.status === "queued"
+                    {syncBatch.isStalled
+                      ? "Stalled"
+                      : syncBatch.status === "queued"
                       ? "Queued"
                       : syncBatch.status === "running"
                         ? "Running"
@@ -834,9 +868,20 @@ export function IngestionClient() {
                   {syncBatch && batchOverallProgress !== null ? (
                     <StatusBadge tone="neutral">{Math.round(batchOverallProgress * 100)}% overall</StatusBadge>
                   ) : null}
-                  {syncElapsed ? <StatusBadge tone="neutral">{syncElapsed} elapsed</StatusBadge> : null}
+                  {syncElapsedLabel ? <StatusBadge tone="neutral">{syncElapsedLabel}</StatusBadge> : null}
+                  {syncHeartbeatLabel ? (
+                    <StatusBadge tone={syncBatch.isStalled ? "danger" : "neutral"}>{syncHeartbeatLabel}</StatusBadge>
+                  ) : null}
                 </div>
               </div>
+
+              {syncBatch.isStalled ? (
+                <InlineAlert tone="danger" title="This background job looks stalled.">
+                  No worker heartbeat has been recorded within the expected window. The current chunk may have hit the
+                  300-second platform limit or the worker was interrupted. Use <span className="font-semibold">Resume stalled job</span> to
+                  reclaim the chunk.
+                </InlineAlert>
+              ) : null}
 
               {syncBatch ? (
                 <div className="grid gap-4 md:grid-cols-4">
@@ -1094,7 +1139,7 @@ export function IngestionClient() {
                   <tbody className="divide-y divide-[var(--color-line)]">
                     {recentSyncBatches.map((batch) => (
                       <tr key={batch.batchId}>
-                        <td className={tableCellClassName}>{new Date(batch.startedAt).toLocaleString()}</td>
+                        <td className={tableCellClassName}>{formatBatchTimestamp(batch)}</td>
                         <td className={tableCellClassName}>
                           <div className="space-y-1">
                             <p className="font-semibold text-[var(--color-ink)]">
@@ -1110,8 +1155,8 @@ export function IngestionClient() {
                           </div>
                         </td>
                         <td className={tableCellClassName}>
-                          <StatusBadge tone={batch.status === "failed" ? "danger" : batch.status === "queued" ? "warning" : batch.status === "running" ? "info" : "success"}>
-                            {batch.status}
+                          <StatusBadge tone={batch.isStalled ? "danger" : batch.status === "failed" ? "danger" : batch.status === "queued" ? "warning" : batch.status === "running" ? "info" : "success"}>
+                            {batch.isStalled ? "stalled" : batch.status}
                           </StatusBadge>
                         </td>
                         <td className={tableCellClassName}>

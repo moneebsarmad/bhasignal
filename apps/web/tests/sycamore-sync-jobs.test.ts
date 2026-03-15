@@ -192,6 +192,11 @@ test("summarizeSycamoreSyncBatch reports the active running job and aggregate co
   ]);
 
   assert.ok(summary);
+  assert.equal(summary.createdAt, "2026-03-20T12:00:00.000Z");
+  assert.equal(summary.startedAt, "2026-03-20T12:00:00.000Z");
+  assert.equal(summary.activeJobStartedAt, "2026-03-20T12:02:00.000Z");
+  assert.equal(summary.lastHeartbeatAt, "2026-03-20T12:02:00.000Z");
+  assert.equal(summary.isStalled, false);
   assert.equal(summary.status, "running");
   assert.equal(summary.completedChunks, 1);
   assert.equal(summary.failedChunks, 0);
@@ -209,6 +214,37 @@ test("summarizeSycamoreSyncBatch reports the active running job and aggregate co
   assert.equal(summary.recordsUpserted, 4);
   assert.equal(summary.warningsCount, 1);
   assert.equal(summary.progress?.stage, "detail_fetch");
+});
+
+test("summarizeSycamoreSyncBatch flags stale running jobs from heartbeat age", () => {
+  const summary = withEnv(
+    {
+      SYCAMORE_ASYNC_STALE_AFTER_MINUTES: "15"
+    },
+    () =>
+      summarizeSycamoreSyncBatch(
+        [
+          makeJob({
+            id: "job_stale_1",
+            status: "running",
+            startedAt: "2026-03-20T12:00:00.000Z",
+            lastHeartbeatAt: "2026-03-20T12:03:00.000Z",
+            progress: makeProgress()
+          })
+        ],
+        {
+          nowIso: "2026-03-20T12:25:00.000Z"
+        }
+      )
+  ) as ReturnType<typeof summarizeSycamoreSyncBatch>;
+
+  assert.ok(summary);
+  assert.equal(summary.status, "running");
+  assert.equal(summary.startedAt, "2026-03-20T12:00:00.000Z");
+  assert.equal(summary.activeJobStartedAt, "2026-03-20T12:00:00.000Z");
+  assert.equal(summary.lastHeartbeatAt, "2026-03-20T12:03:00.000Z");
+  assert.equal(summary.staleAfterMinutes, 15);
+  assert.equal(summary.isStalled, true);
 });
 
 test("enqueueSycamoreSyncBatch splits wide manual ranges into queued windows", async () => {
@@ -276,6 +312,10 @@ test("enqueueSycamoreSyncBatch splits wide manual ranges into queued windows", a
   assert.equal(result.jobs.length, 11);
   assert.equal(result.batch.totalChunks, 11);
   assert.equal(result.batch.status, "queued");
+  assert.equal(result.batch.startedAt, null);
+  assert.equal(result.batch.activeJobStartedAt, null);
+  assert.equal(result.batch.lastHeartbeatAt, null);
+  assert.equal(result.batch.isStalled, false);
   assert.deepEqual(result.jobs[0]?.window, { startDate: "2026-03-01", endDate: "2026-03-03" });
   assert.deepEqual(result.jobs[1]?.window, { startDate: "2026-03-04", endDate: "2026-03-06" });
   assert.deepEqual(result.jobs.at(-1)?.window, { startDate: "2026-03-31", endDate: "2026-03-31" });

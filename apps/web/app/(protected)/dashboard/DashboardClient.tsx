@@ -123,8 +123,13 @@ interface SycamoreSyncBatchSummary {
   recordsDiscovered: number;
   recordsUpserted: number;
   warnings: string[];
-  startedAt: string;
+  createdAt: string;
+  startedAt: string | null;
   completedAt: string | null;
+  activeJobStartedAt: string | null;
+  lastHeartbeatAt: string | null;
+  staleAfterMinutes: number;
+  isStalled: boolean;
   triggeredBy: string;
 }
 
