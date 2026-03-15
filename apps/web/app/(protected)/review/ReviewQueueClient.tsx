@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, PencilLine, RefreshCcw, ShieldAlert, X } from "lucide-react";
+import { Check, PencilLine, RefreshCcw, X } from "lucide-react";
 
 import {
   Button,
@@ -443,14 +443,10 @@ export function ReviewQueueClient() {
       />
 
       <Panel className="space-y-5">
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Queue filters</p>
-            <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Focus the review session</h2>
-          </div>
-          <StatusBadge tone="warning">{openCount} open items in view</StatusBadge>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-display text-xl text-[var(--color-ink)]">Filters</h2>
+          <StatusBadge tone="warning">{openCount} open</StatusBadge>
         </div>
-
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Field label="Status">
             <Select value={status} onChange={(event) => setStatus(event.currentTarget.value as ReviewStatusFilter)}>
@@ -503,34 +499,17 @@ export function ReviewQueueClient() {
         </InlineAlert>
       ) : null}
 
-      <section className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(22rem,0.95fr)]">
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(20rem,0.9fr)]">
         <div className="space-y-5">
-          <div className="grid gap-4 md:grid-cols-3">
-            <SoftPanel className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Visible open</p>
-              <p className="font-display text-4xl text-[var(--color-ink)]">{openCount}</p>
-              <p className="text-sm text-[var(--color-muted)]">Rows that can still be resolved in this filtered view.</p>
-            </SoftPanel>
-            <SoftPanel className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Ready now</p>
-              <p className="font-display text-4xl text-[var(--color-ink)]">{readyCount}</p>
-              <p className="text-sm text-[var(--color-muted)]">Open rows with no warnings and medium/high confidence.</p>
-            </SoftPanel>
-            <SoftPanel className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Selected</p>
-              <p className="font-display text-4xl text-[var(--color-ink)]">{selectedCount}</p>
-              <p className="text-sm text-[var(--color-muted)]">Current bulk action scope in the table below.</p>
-            </SoftPanel>
-          </div>
-
           <Panel className="space-y-5">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Queue</p>
-                <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Compact review board</h2>
-                <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
-                  Scan, select, and approve from the table. Open the editor only when a row needs corrections.
-                </p>
+              <div className="space-y-2">
+                <h2 className="font-display text-2xl text-[var(--color-ink)]">Review board</h2>
+                <div className="flex flex-wrap gap-2">
+                  <StatusBadge tone="warning">{openCount} open</StatusBadge>
+                  <StatusBadge tone="success">{readyCount} ready</StatusBadge>
+                  <StatusBadge tone="neutral">{selectedCount} selected</StatusBadge>
+                </div>
               </div>
               <div className="flex flex-wrap gap-3">
                 <Button
@@ -773,15 +752,7 @@ export function ReviewQueueClient() {
               </div>
 
               <SoftPanel className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-2xl bg-[var(--color-primary-soft)] p-3 text-[var(--color-primary)]">
-                    <ShieldAlert className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-[var(--color-ink)]">Source snippet</p>
-                    <p className="text-sm text-[var(--color-muted)]">Use the extracted source to verify field edits before approving.</p>
-                  </div>
-                </div>
+                <p className="font-semibold text-[var(--color-ink)]">Source snippet</p>
                 <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-white px-4 py-4 text-sm leading-7 text-[var(--color-muted)]">
                   {selectedItem.sourceSnippet || "No snippet captured for this record."}
                 </div>

@@ -525,8 +525,11 @@ export function IngestionClient() {
     }
   }
 
+  const activeSyncBatchId = syncBatch?.batchId ?? null;
+  const activeSyncBatchStatus = syncBatch?.status ?? null;
+
   useEffect(() => {
-    if (!syncBatch || (syncBatch.status !== "queued" && syncBatch.status !== "running")) {
+    if (!activeSyncBatchId || (activeSyncBatchStatus !== "queued" && activeSyncBatchStatus !== "running")) {
       return;
     }
 
@@ -534,7 +537,7 @@ export function IngestionClient() {
 
     const poll = async () => {
       try {
-        const nextBatch = await loadSyncBatch(syncBatch.batchId);
+        const nextBatch = await loadSyncBatch(activeSyncBatchId);
         if (cancelled || !nextBatch) {
           return;
         }
@@ -570,7 +573,7 @@ export function IngestionClient() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [syncBatch?.batchId, syncBatch?.status]);
+  }, [activeSyncBatchId, activeSyncBatchStatus]);
 
   const summary = useMemo(() => {
     const uploadResults = lastResult?.uploadResults ?? [];
@@ -739,30 +742,41 @@ export function IngestionClient() {
       />
 
       <section className="space-y-5">
-        <Panel className="space-y-5 border-white/80 bg-[linear-gradient(135deg,rgba(17,94,89,0.10),rgba(255,255,255,0.98)_48%,rgba(173,124,44,0.06))]">
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <StatusBadge tone="success">Primary path</StatusBadge>
-              <StatusBadge tone="info">Sycamore sync</StatusBadge>
-            </div>
+        <Panel className="space-y-5 border-white/80 bg-[linear-gradient(135deg,rgba(17,94,89,0.08),rgba(255,255,255,0.98)_48%,rgba(173,124,44,0.05))]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Primary source</p>
-              <h2 className="font-display text-3xl text-[var(--color-ink)]">Sycamore discipline import</h2>
-              <p className="max-w-3xl text-sm leading-7 text-[var(--color-muted)]">
-                Use this for normal daily intake. Sycamore rows land directly in the read-only SIS dataset used by
-                dashboard and reporting, without creating parse runs or review tasks.
-              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <StatusBadge tone="success">Sycamore</StatusBadge>
+                <StatusBadge tone={showFallbackTools ? "warning" : "neutral"}>
+                  Fallback {showFallbackTools ? "visible" : "hidden"}
+                </StatusBadge>
+              </div>
+              <div className="space-y-1">
+                <h2 className="font-display text-2xl text-[var(--color-ink)]">Sycamore intake</h2>
+                <p className="max-w-2xl text-sm text-[var(--color-muted)]">
+                  Daily intake runs here. Use a date range only for backfill, validation, or targeted checks.
+                </p>
+              </div>
             </div>
-          </div>
 
-          <SoftPanel className="space-y-3 border-white/70 bg-white/80">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">How to use it</p>
-            <p className="text-sm leading-7 text-[var(--color-muted)]">
-              Run the default sync for routine refreshes. Use a date range only for targeted backfill, validation
-              windows, or one-off investigations. Large initial backfills and wide manual ranges are queued as smaller
-              background windows so the app does not need to hold one long request open.
-            </p>
-          </SoftPanel>
+            <label
+              htmlFor="show-fallback-tools"
+              className="flex items-start gap-3 rounded-[1rem] border border-[var(--color-line)] bg-white/80 px-4 py-3"
+            >
+              <Checkbox
+                id="show-fallback-tools"
+                checked={showFallbackTools}
+                onChange={(event) => setShowFallbackTools(event.currentTarget.checked)}
+                className="mt-0.5"
+              />
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-[var(--color-ink)]">Show fallback PDF intake</p>
+                <p className="text-xs leading-5 text-[var(--color-muted)]">
+                  Keep manual upload hidden unless Sycamore is missing records.
+                </p>
+              </div>
+            </label>
+          </div>
 
           <form onSubmit={onSyncSubmit} className="space-y-5">
             <div className="grid gap-4 md:grid-cols-[1.45fr_0.55fr]">
@@ -798,13 +812,20 @@ export function IngestionClient() {
             </div>
 
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm text-[var(--color-muted)]">
-                {hasTargetedSyncFilters
-                  ? "Student-name and grade filters require a selected date range. Default sync is reserved for full-source refreshes."
-                  : "Default sync continues from the last successful window with a small overlap. Date-range sync is for explicit backfill or comparison work."}
-                {willChunkSelectedRange
-                  ? ` Selected windows longer than ${MAX_SYNC_WINDOW_DAYS} days are split automatically into ${MAX_SYNC_WINDOW_DAYS}-day background chunks.`
-                  : ""}
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <StatusBadge tone={hasTargetedSyncFilters ? "warning" : "info"}>
+                    {hasTargetedSyncFilters ? "Date range required for targeted syncs" : "Default sync resumes from the last successful window"}
+                  </StatusBadge>
+                  {willChunkSelectedRange ? (
+                    <StatusBadge tone="warning">{MAX_SYNC_WINDOW_DAYS}-day chunking enabled</StatusBadge>
+                  ) : null}
+                </div>
+                <p className="text-sm text-[var(--color-muted)]">
+                  {hasTargetedSyncFilters
+                    ? "Student and grade filters only run with an explicit start and end date."
+                    : "Use the default action for routine refreshes and the date-range action for backfill."}
+                </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <Button
@@ -1053,68 +1074,12 @@ export function IngestionClient() {
           ) : null}
         </Panel>
 
-        <div className="grid gap-5 lg:grid-cols-3">
-          <SoftPanel className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Primary source</p>
-            <p className="font-display text-4xl text-[var(--color-ink)]">Sycamore</p>
-            <p className="text-sm leading-7 text-[var(--color-muted)]">Normal daily intake should start with the SIS sync.</p>
-          </SoftPanel>
-          <SoftPanel className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Default sync mode</p>
-            <p className="font-display text-4xl text-[var(--color-ink)]">Incremental</p>
-            <p className="text-sm leading-7 text-[var(--color-muted)]">
-              Large first-run backfills automatically roll through smaller windows before the app returns to
-              incremental syncs.
-            </p>
-          </SoftPanel>
-          <SoftPanel className="space-y-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Fallback tools</p>
-                <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">
-                  {showFallbackTools ? "Visible" : "Hidden"}
-                </p>
-              </div>
-              <StatusBadge tone={showFallbackTools ? "warning" : "neutral"}>
-                {jobs.length} job{jobs.length === 1 ? "" : "s"} tracked
-              </StatusBadge>
-            </div>
-
-            <label
-              htmlFor="show-fallback-tools"
-              className="flex items-start gap-3 rounded-[1.25rem] border border-[var(--color-line)] bg-white/80 px-4 py-3"
-            >
-              <Checkbox
-                id="show-fallback-tools"
-                checked={showFallbackTools}
-                onChange={(event) => setShowFallbackTools(event.currentTarget.checked)}
-                className="mt-1"
-              />
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-[var(--color-ink)]">Enable fallback PDF intake</p>
-                <p className="text-sm leading-6 text-[var(--color-muted)]">
-                  Show manual PDF upload, parser activity, and review counts only when Sycamore is missing records.
-                </p>
-              </div>
-            </label>
-
-            <p className="text-sm leading-7 text-[var(--color-muted)]">
-              {flaggedRows} row{flaggedRows === 1 ? "" : "s"} currently need review from fallback imports.
-            </p>
-          </SoftPanel>
-        </div>
-
         <Panel className="space-y-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
-                Background history
-              </p>
-              <h2 className="mt-2 font-display text-3xl text-[var(--color-ink)]">Recent Sycamore sync jobs</h2>
-            </div>
-            <div className="text-sm text-[var(--color-muted)]">
-              Background syncs continue even if you leave this page.
-            </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-display text-2xl text-[var(--color-ink)]">Recent Sycamore jobs</h2>
+            {recentSyncBatches.length > 0 ? (
+              <StatusBadge tone="neutral">{recentSyncBatches.length} shown</StatusBadge>
+            ) : null}
           </div>
 
           {recentSyncBatches.length === 0 ? (
@@ -1175,113 +1140,84 @@ export function IngestionClient() {
 
         {showFallbackTools ? (
           <Panel className="space-y-5">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div className="space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge tone="warning">Fallback path</StatusBadge>
-                  <StatusBadge tone="neutral">PDF parser workflow</StatusBadge>
+                  <StatusBadge tone="warning">Fallback</StatusBadge>
+                  <StatusBadge tone="neutral">{jobs.length} PDF job{jobs.length === 1 ? "" : "s"}</StatusBadge>
+                  <StatusBadge tone={flaggedRows > 0 ? "warning" : "neutral"}>
+                    {flaggedRows} row{flaggedRows === 1 ? "" : "s"} flagged
+                  </StatusBadge>
                 </div>
-                <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Fallback import</p>
-                  <h2 className="font-display text-3xl text-[var(--color-ink)]">PDF backfill intake</h2>
-                  <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
-                    Use PDF upload only when a record is missing from Sycamore or you need historical backfill. Each
-                    file becomes a parse run and may still require review before anything becomes canonical.
+                <div className="space-y-1">
+                  <h2 className="font-display text-2xl text-[var(--color-ink)]">PDF backfill intake</h2>
+                  <p className="max-w-2xl text-sm text-[var(--color-muted)]">
+                    Use only when Sycamore is missing records or a historical PDF backfill is required.
                   </p>
                 </div>
               </div>
               <Button type="button" variant="ghost" size="sm" onClick={() => setShowFallbackTools(false)}>
-                Hide fallback tools
+                Hide
               </Button>
             </div>
 
-            <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-              <div className="space-y-5">
-                <SoftPanel className="space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Exception workflow</p>
-                  <p className="text-sm leading-7 text-[var(--color-muted)]">
-                    This path remains available for edge cases, but it is not the normal daily intake route for the
-                    app.
-                  </p>
-                </SoftPanel>
+            <form onSubmit={onSubmit} className="space-y-5">
+              <label
+                htmlFor="discipline-pdf"
+                tabIndex={0}
+                onKeyDown={onDropZoneKeyDown}
+                onDragEnter={onDropZoneDragEnter}
+                onDragOver={onDropZoneDragOver}
+                onDragLeave={onDropZoneDragLeave}
+                onDrop={onDropZoneDrop}
+                className={cn(
+                  "group flex cursor-pointer flex-col items-center justify-center rounded-[1.75rem] border border-dashed px-6 py-10 text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-panel)]",
+                  isDragActive
+                    ? "border-[var(--color-primary)] bg-white shadow-card"
+                    : "border-[var(--color-line-strong)] bg-[var(--color-soft-surface)] hover:border-[var(--color-primary)] hover:bg-white"
+                )}
+              >
+                <div
+                  className={cn(
+                    "rounded-full p-4 text-[var(--color-primary)] shadow-card transition",
+                    isDragActive ? "bg-[var(--color-soft-surface)]" : "bg-white"
+                  )}
+                >
+                  <FileUp className="h-6 w-6" />
+                </div>
+                <p className="mt-4 font-display text-2xl text-[var(--color-ink)]">
+                  {uploadHeading(selectedFiles, isDragActive)}
+                </p>
+                <p className="mt-2 max-w-md text-sm text-[var(--color-muted)]">
+                  Drag PDFs here or click to browse. Each file creates its own parse run.
+                </p>
+                <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                  {isDragActive ? "Release to add files" : "PDFs only"}
+                </p>
+                <input
+                  id="discipline-pdf"
+                  ref={fileInputRef}
+                  name="files"
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  multiple
+                  className="sr-only"
+                  onChange={(event) => {
+                    handleIncomingFiles(event.currentTarget.files);
+                  }}
+                  required
+                />
+              </label>
 
-                <form onSubmit={onSubmit} className="space-y-5">
-                  <label
-                    htmlFor="discipline-pdf"
-                    tabIndex={0}
-                    onKeyDown={onDropZoneKeyDown}
-                    onDragEnter={onDropZoneDragEnter}
-                    onDragOver={onDropZoneDragOver}
-                    onDragLeave={onDropZoneDragLeave}
-                    onDrop={onDropZoneDrop}
-                    className={cn(
-                      "group flex cursor-pointer flex-col items-center justify-center rounded-[1.75rem] border border-dashed px-6 py-12 text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-panel)]",
-                      isDragActive
-                        ? "border-[var(--color-primary)] bg-white shadow-card"
-                        : "border-[var(--color-line-strong)] bg-[var(--color-soft-surface)] hover:border-[var(--color-primary)] hover:bg-white"
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "rounded-full p-4 text-[var(--color-primary)] shadow-card transition",
-                        isDragActive ? "bg-[var(--color-soft-surface)]" : "bg-white"
-                      )}
-                    >
-                      <FileUp className="h-6 w-6" />
-                    </div>
-                    <p className="mt-5 font-display text-2xl text-[var(--color-ink)]">
-                      {uploadHeading(selectedFiles, isDragActive)}
-                    </p>
-                    <p className="mt-3 max-w-md text-sm leading-7 text-[var(--color-muted)]">
-                      Drag and drop one or more PDFs here, or click to browse. Each file will create its own parse
-                      run. Keep reports under the configured upload and page limits to avoid parser rejection.
-                    </p>
-                    <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                      {isDragActive ? "Release to add these files" : "PDFs only"}
-                    </p>
-                    <input
-                      id="discipline-pdf"
-                      ref={fileInputRef}
-                      name="files"
-                      type="file"
-                      accept="application/pdf,.pdf"
-                      multiple
-                      className="sr-only"
-                      onChange={(event) => {
-                        handleIncomingFiles(event.currentTarget.files);
-                      }}
-                      required
-                    />
-                  </label>
-
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="text-sm text-[var(--color-muted)]">{selectionSummary(selectedFiles)}</div>
-                    <Button type="submit" variant="secondary" disabled={isUploading}>
-                      {isUploading
-                        ? `Uploading ${selectedFiles.length || 1} PDF${selectedFiles.length === 1 ? "" : "s"}...`
-                        : `Upload ${selectedFiles.length > 1 ? "PDFs" : "PDF"}`}
-                    </Button>
-                  </div>
-                </form>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-[var(--color-muted)]">{selectionSummary(selectedFiles)}</div>
+                <Button type="submit" variant="secondary" disabled={isUploading}>
+                  {isUploading
+                    ? `Uploading ${selectedFiles.length || 1} PDF${selectedFiles.length === 1 ? "" : "s"}...`
+                    : `Upload ${selectedFiles.length > 1 ? "PDFs" : "PDF"}`}
+                </Button>
               </div>
-
-              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-1">
-                <SoftPanel className="space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Fallback PDF jobs</p>
-                  <p className="font-display text-4xl text-[var(--color-ink)]">{jobs.length}</p>
-                  <p className="text-sm leading-7 text-[var(--color-muted)]">
-                    Parser jobs tracked for backfill and exception imports.
-                  </p>
-                </SoftPanel>
-                <SoftPanel className="space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Rows needing review</p>
-                  <p className="font-display text-4xl text-[var(--color-ink)]">{flaggedRows}</p>
-                  <p className="text-sm leading-7 text-[var(--color-muted)]">
-                    Fallback-import rows that still require human review before promotion.
-                  </p>
-                </SoftPanel>
-              </div>
-            </div>
+            </form>
           </Panel>
         ) : null}
       </section>

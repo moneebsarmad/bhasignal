@@ -226,8 +226,7 @@ export function PoliciesClient() {
         <Panel className="space-y-5">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Current policy</p>
-              <h2 className="mt-2 font-display text-3xl text-[var(--color-ink)]">Live threshold model</h2>
+              <h2 className="font-display text-2xl text-[var(--color-ink)]">Current policy</h2>
             </div>
             {latest ? <StatusBadge tone="info">v{latest.version}</StatusBadge> : null}
           </div>
@@ -236,7 +235,7 @@ export function PoliciesClient() {
             <>
               <SoftPanel className="space-y-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Base threshold</p>
-                <p className="font-display text-4xl text-[var(--color-ink)]">X = {latest.baseThreshold}</p>
+                <p className="font-display text-3xl text-[var(--color-ink)]">X = {latest.baseThreshold}</p>
                 <p className="text-sm leading-7 text-[var(--color-muted)]">
                   Created by {latest.createdBy} on {new Date(latest.createdAt).toLocaleString()}.
                 </p>
@@ -299,11 +298,7 @@ export function PoliciesClient() {
 
         <Panel className="space-y-5">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Create version</p>
-            <h2 className="font-display text-3xl text-[var(--color-ink)]">Draft a new policy</h2>
-            <p className="text-sm leading-7 text-[var(--color-muted)]">
-              Use structured fields for warnings, milestones, and intervention templates. The form still submits the existing API shape.
-            </p>
+            <h2 className="font-display text-2xl text-[var(--color-ink)]">Create version</h2>
           </div>
 
           <form onSubmit={onCreatePolicy} className="space-y-5">
@@ -395,10 +390,7 @@ export function PoliciesClient() {
 
             <div className="space-y-4">
               <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-[var(--color-ink)]">Intervention templates</p>
-                  <p className="text-sm text-[var(--color-muted)]">One card per milestone action or intervention requirement.</p>
-                </div>
+                <p className="font-semibold text-[var(--color-ink)]">Intervention templates</p>
                 <Button
                   type="button"
                   variant="secondary"
@@ -491,10 +483,7 @@ export function PoliciesClient() {
       </section>
 
       <Panel className="space-y-5">
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">History</p>
-          <h2 className="font-display text-3xl text-[var(--color-ink)]">Policy version history</h2>
-        </div>
+        <h2 className="font-display text-2xl text-[var(--color-ink)]">Policy history</h2>
 
         {policies.length === 0 ? (
           <EmptyState

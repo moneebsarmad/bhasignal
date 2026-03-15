@@ -354,17 +354,8 @@ export function DeepAnalytics({ embedded = false }: { embedded?: boolean }) {
   return (
     <div className="space-y-6">
       <Panel className={cn("space-y-5", embedded ? "border-white/70 bg-white/90" : "")}>
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
-              Stored data filters
-            </p>
-            <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Deep analytics</h2>
-          </div>
-          <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
-            Focus the window, then read the live pressure, repeat behavior, intervention reliability, and culture
-            patterns that need action now.
-          </p>
+        <div>
+          <h2 className="font-display text-2xl text-[var(--color-ink)]">Filters</h2>
         </div>
 
         <form onSubmit={onApplyFilters} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -477,7 +468,6 @@ export function DeepAnalytics({ embedded = false }: { embedded?: boolean }) {
                 value={summaryValue(metric)}
                 description={metric.description}
                 icon={metric.label.includes("Students") ? Users : BarChart3}
-                className="xl:min-h-[13.5rem]"
               />
             ))}
           </section>
@@ -940,9 +930,6 @@ export function DeepAnalytics({ embedded = false }: { embedded?: boolean }) {
                     Student list
                   </p>
                   <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Window drilldown</h2>
-                  <p className="mt-2 text-sm text-[var(--color-muted)]">
-                    Open only when you need the underlying student list for the current analytics window.
-                  </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <StatusBadge tone="warning">{data.studentRows.length} rows</StatusBadge>

@@ -19,9 +19,9 @@ const buttonVariantClassName: Record<ButtonVariant, string> = {
 };
 
 const buttonSizeClassName: Record<ButtonSize, string> = {
-  sm: "h-9 rounded-full px-3.5 text-sm",
-  md: "h-11 rounded-full px-5 text-sm",
-  lg: "h-12 rounded-full px-6 text-sm"
+  sm: "h-8 rounded-full px-3 text-sm",
+  md: "h-10 rounded-full px-4 text-sm",
+  lg: "h-11 rounded-full px-5 text-sm"
 };
 
 const statusToneClassName: Record<StatusTone, string> = {
@@ -64,6 +64,7 @@ export const Input = forwardRef<HTMLInputElement, ComponentPropsWithoutRef<"inpu
       ref={ref}
       className={cn(
         "h-11 w-full rounded-2xl border border-[var(--color-line)] bg-white px-4 text-sm text-[var(--color-ink)] outline-none transition placeholder:text-[var(--color-subtle)] focus:border-[var(--color-primary)] focus:ring-4 focus:ring-[var(--color-ring)]",
+        "h-10",
         className
       )}
       {...props}
@@ -79,6 +80,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, ComponentPropsWithoutRef
       ref={ref}
       className={cn(
         "min-h-[8rem] w-full rounded-[1.5rem] border border-[var(--color-line)] bg-white px-4 py-3 text-sm text-[var(--color-ink)] outline-none transition placeholder:text-[var(--color-subtle)] focus:border-[var(--color-primary)] focus:ring-4 focus:ring-[var(--color-ring)]",
+        "min-h-[6rem] rounded-[1.25rem] py-2.5",
         className
       )}
       {...props}
@@ -94,6 +96,7 @@ export const Select = forwardRef<HTMLSelectElement, ComponentPropsWithoutRef<"se
       ref={ref}
       className={cn(
         "h-11 w-full rounded-2xl border border-[var(--color-line)] bg-white px-4 text-sm text-[var(--color-ink)] outline-none transition focus:border-[var(--color-primary)] focus:ring-4 focus:ring-[var(--color-ring)]",
+        "h-10",
         className
       )}
       {...props}
@@ -131,18 +134,15 @@ export function Field({
   children: ReactNode;
 }) {
   return (
-    <label className={cn("grid gap-2", className)}>
+    <label className={cn("grid gap-1.5", className)}>
       <span className="text-sm font-semibold text-[var(--color-ink)]">{label}</span>
       {children}
-      {hint ? <span className="text-xs text-[var(--color-subtle)]">{hint}</span> : null}
+      {hint ? <span className="text-xs leading-5 text-[var(--color-subtle)]">{hint}</span> : null}
     </label>
   );
 }
 
 export function PageHeader({
-  eyebrow,
-  title,
-  description,
   actions,
   className
 }: {
@@ -152,18 +152,13 @@ export function PageHeader({
   actions?: ReactNode;
   className?: string;
 }) {
+  if (!actions) {
+    return null;
+  }
+
   return (
-    <div className={cn("flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between", className)}>
-      <div className="max-w-3xl space-y-3">
-        {eyebrow ? (
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--color-primary)]">{eyebrow}</p>
-        ) : null}
-        <div className="space-y-2">
-          <h1 className="font-display text-3xl leading-tight text-[var(--color-ink)] sm:text-[2.35rem]">{title}</h1>
-          <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)] sm:text-[0.96rem]">{description}</p>
-        </div>
-      </div>
-      {actions ? <div className="flex flex-wrap items-center gap-3">{actions}</div> : null}
+    <div className={cn("flex flex-wrap items-center justify-end gap-3", className)}>
+      {actions}
     </div>
   );
 }
@@ -172,7 +167,7 @@ export function Panel({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        "rounded-[1.75rem] border border-[var(--color-line)] bg-white/95 p-5 shadow-card backdrop-blur sm:p-6",
+        "rounded-[1.5rem] border border-[var(--color-line)] bg-white/95 p-4 shadow-card backdrop-blur sm:p-5",
         className
       )}
       {...props}
@@ -184,7 +179,7 @@ export function SoftPanel({ className, ...props }: HTMLAttributes<HTMLDivElement
   return (
     <div
       className={cn(
-        "rounded-[1.5rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-5 sm:p-6",
+        "rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 sm:p-5",
         className
       )}
       {...props}
@@ -206,8 +201,8 @@ export function SectionHeader({
   return (
     <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between", className)}>
       <div className="space-y-1">
-        <h2 className="font-display text-2xl text-[var(--color-ink)]">{title}</h2>
-        {description ? <p className="text-sm text-[var(--color-muted)]">{description}</p> : null}
+        <h2 className="font-display text-xl text-[var(--color-ink)]">{title}</h2>
+        {description ? <p className="text-sm leading-6 text-[var(--color-muted)]">{description}</p> : null}
       </div>
       {actions ? <div className="flex flex-wrap gap-3">{actions}</div> : null}
     </div>
@@ -228,11 +223,11 @@ export function InlineAlert({
   const Icon = tone === "success" ? CheckCircle2 : tone === "danger" ? AlertCircle : Info;
 
   return (
-    <div className={cn("flex items-start gap-3 rounded-[1.35rem] border p-4", statusToneClassName[tone], className)}>
+    <div className={cn("flex items-start gap-3 rounded-[1.1rem] border px-3.5 py-3", statusToneClassName[tone], className)}>
       <Icon className="mt-0.5 h-4 w-4 shrink-0" />
       <div className="space-y-1">
         <p className="text-sm font-semibold">{title}</p>
-        {children ? <div className="text-sm leading-6">{children}</div> : null}
+        {children ? <div className="text-sm leading-5">{children}</div> : null}
       </div>
     </div>
   );
@@ -254,18 +249,18 @@ export function InsightPanel({
   return (
     <Panel
       className={cn(
-        "overflow-hidden bg-[linear-gradient(135deg,rgba(17,94,89,0.08),rgba(255,255,255,0.98)_42%,rgba(173,124,44,0.08))]",
+        "overflow-hidden bg-[linear-gradient(135deg,rgba(17,94,89,0.05),rgba(255,255,255,0.98)_42%,rgba(173,124,44,0.05))]",
         className
       )}
     >
-      <div className="space-y-3">
+      <div className="space-y-2">
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">{eyebrow}</p>
-        <div className="space-y-2">
-          <h3 className="font-display text-2xl text-[var(--color-ink)]">{title}</h3>
-          <p className="max-w-3xl text-sm leading-7 text-[var(--color-muted)]">{description}</p>
+        <div className="space-y-1.5">
+          <h3 className="font-display text-xl text-[var(--color-ink)]">{title}</h3>
+          <p className="max-w-3xl text-sm leading-6 text-[var(--color-muted)]">{description}</p>
         </div>
       </div>
-      {children ? <div className="mt-5">{children}</div> : null}
+      {children ? <div className="mt-4">{children}</div> : null}
     </Panel>
   );
 }
@@ -282,7 +277,7 @@ export function StatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]",
         statusToneClassName[tone],
         className
       )}
@@ -310,15 +305,13 @@ export function StatCard({
   className?: string;
 }) {
   return (
-    <Panel className={cn("relative overflow-hidden", className)}>
-      <div className="absolute right-0 top-0 h-24 w-24 rounded-full bg-[radial-gradient(circle_at_center,_rgba(17,94,89,0.10),_transparent_70%)]" />
-      <div className="relative flex items-start justify-between gap-4">
-        <div className="space-y-2">
+    <Panel className={cn("flex items-start justify-between gap-3", className)}>
+      <div className="min-w-0 space-y-1.5">
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-subtle)]">{label}</p>
-          <p className="font-display text-4xl text-[var(--color-ink)]">{value}</p>
-          {description ? <p className="text-sm leading-6 text-[var(--color-muted)]">{description}</p> : null}
+          <p className="font-display text-3xl text-[var(--color-ink)]">{value}</p>
+          {description ? <p className="text-sm leading-5 text-[var(--color-muted)]">{description}</p> : null}
           {href ? (
-            <div className="pt-1">
+            <div className="pt-0.5">
               <Link
                 href={href}
                 className="text-sm font-semibold text-[var(--color-primary)] transition hover:text-[var(--color-primary-strong)]"
@@ -327,16 +320,15 @@ export function StatCard({
               </Link>
             </div>
           ) : null}
-        </div>
-        {Icon ? (
-          <div
-            title={description}
-            className="rounded-2xl border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-3 text-[var(--color-primary)]"
-          >
-            <Icon className="h-5 w-5" />
-          </div>
-        ) : null}
       </div>
+      {Icon ? (
+        <div
+          title={description}
+          className="rounded-xl border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-2.5 text-[var(--color-primary)]"
+        >
+          <Icon className="h-4 w-4" />
+        </div>
+      ) : null}
     </Panel>
   );
 }
@@ -355,15 +347,15 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "flex min-h-[13rem] flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-[var(--color-line-strong)] bg-[var(--color-soft-surface)] px-6 py-10 text-center",
+        "flex min-h-[9rem] flex-col items-center justify-center rounded-[1.25rem] border border-dashed border-[var(--color-line-strong)] bg-[var(--color-soft-surface)] px-4 py-6 text-center",
         className
       )}
     >
-      <div className="space-y-3">
-        <p className="font-display text-2xl text-[var(--color-ink)]">{title}</p>
-        <p className="mx-auto max-w-md text-sm leading-7 text-[var(--color-muted)]">{description}</p>
+      <div className="space-y-2">
+        <p className="font-display text-xl text-[var(--color-ink)]">{title}</p>
+        <p className="mx-auto max-w-md text-sm leading-6 text-[var(--color-muted)]">{description}</p>
       </div>
-      {action ? <div className="mt-5">{action}</div> : null}
+      {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
 }
@@ -372,5 +364,5 @@ export const tableShellClassName =
   "overflow-hidden rounded-[1.5rem] border border-[var(--color-line)] bg-white";
 export const tableClassName = "min-w-full divide-y divide-[var(--color-line)] text-left text-sm";
 export const tableHeadCellClassName =
-  "bg-[var(--color-soft-surface)] px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]";
-export const tableCellClassName = "px-4 py-3.5 align-top text-sm text-[var(--color-muted)]";
+  "bg-[var(--color-soft-surface)] px-3.5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-subtle)]";
+export const tableCellClassName = "px-3.5 py-3 align-top text-sm text-[var(--color-muted)]";

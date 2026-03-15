@@ -111,9 +111,9 @@ export function AuditClient() {
       />
 
       <Panel className="space-y-5">
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Filters</p>
-          <h2 className="font-display text-3xl text-[var(--color-ink)]">Narrow the audit view</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-display text-2xl text-[var(--color-ink)]">Filters</h2>
+          <StatusBadge tone="neutral">{limit} max rows</StatusBadge>
         </div>
         <form onSubmit={onApplyFilters} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Field label="Event type">
@@ -154,11 +154,8 @@ export function AuditClient() {
       <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
         <Panel className="space-y-5">
           <div className="flex items-center justify-between gap-3">
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Event list</p>
-              <h2 className="font-display text-3xl text-[var(--color-ink)]">{events.length} events in scope</h2>
-            </div>
-            <StatusBadge tone="info">{limit} max rows</StatusBadge>
+            <h2 className="font-display text-2xl text-[var(--color-ink)]">Events</h2>
+            <StatusBadge tone="info">{events.length} loaded</StatusBadge>
           </div>
 
           {events.length === 0 ? (
@@ -226,7 +223,7 @@ export function AuditClient() {
                   <StatusBadge tone="neutral">{selectedEvent.entityType}</StatusBadge>
                 </div>
                 <div>
-                  <h2 className="font-display text-3xl text-[var(--color-ink)]">{selectedEvent.id}</h2>
+                  <h2 className="font-display text-2xl text-[var(--color-ink)]">{selectedEvent.id}</h2>
                   <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
                     {new Date(selectedEvent.createdAt).toLocaleString()} • actor {selectedEvent.actor}
                   </p>

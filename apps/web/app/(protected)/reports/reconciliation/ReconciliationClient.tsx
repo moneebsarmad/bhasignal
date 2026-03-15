@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { GitCompareArrows, RefreshCcw } from "lucide-react";
+import { RefreshCcw } from "lucide-react";
 
 import {
   Button,
@@ -11,10 +11,8 @@ import {
   Field,
   InlineAlert,
   Input,
-  InsightPanel,
   PageHeader,
   Panel,
-  StatCard,
   StatusBadge,
   Textarea,
   buttonStyles,
@@ -245,10 +243,7 @@ export function ReconciliationClient() {
       />
 
       <Panel className="space-y-5">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Inputs</p>
-          <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Targeted student comparison</h2>
-        </div>
+        <h2 className="font-display text-2xl text-[var(--color-ink)]">Inputs</h2>
 
         <form onSubmit={onApplyFilters} className="grid gap-4 xl:grid-cols-[1.3fr_0.8fr_0.8fr_auto]">
           <Field label="Student names" hint="Enter one student name per line or separate names with commas.">
@@ -281,68 +276,31 @@ export function ReconciliationClient() {
 
       {data ? (
         <>
-          <InsightPanel
-            eyebrow="Readout"
-            title="Current reconciliation posture"
-            description={`Compared ${data.summary.sycamoreRecords} Sycamore rows against ${data.summary.pdfRecords} approved PDF incidents for ${data.summary.studentsRequested} requested students between ${data.window.startDate} and ${data.window.endDate}.`}
-          >
-            <div className="flex flex-wrap gap-3">
-              <StatusBadge tone="info">Generated {new Date(data.generatedAt).toLocaleString()}</StatusBadge>
+          <Panel className="space-y-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-1">
+                <h2 className="font-display text-2xl text-[var(--color-ink)]">Summary</h2>
+                <p className="text-sm text-[var(--color-muted)]">
+                  {data.summary.studentsRequested} students, {data.summary.sycamoreRecords} Sycamore rows, {data.summary.pdfRecords} PDF rows.
+                </p>
+              </div>
+              <StatusBadge tone="neutral">Generated {new Date(data.generatedAt).toLocaleString()}</StatusBadge>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <StatusBadge tone="neutral">{data.summary.studentsWithAnyRecords} with records</StatusBadge>
               <StatusBadge tone="success">{data.summary.matched} matched</StatusBadge>
-              <StatusBadge tone="warning">{data.summary.fieldMismatch} field mismatches</StatusBadge>
+              <StatusBadge tone="warning">{data.summary.fieldMismatch} mismatched</StatusBadge>
               <StatusBadge tone="info">{data.summary.sycamoreOnly} Sycamore only</StatusBadge>
               <StatusBadge tone="info">{data.summary.pdfOnly} PDF only</StatusBadge>
             </div>
-          </InsightPanel>
-
-          <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-6">
-            <StatCard
-              label="Students requested"
-              value={data.summary.studentsRequested}
-              description="Names included in this comparison slice."
-              icon={GitCompareArrows}
-            />
-            <StatCard
-              label="Students with records"
-              value={data.summary.studentsWithAnyRecords}
-              description="Requested students with at least one row in either source."
-              icon={GitCompareArrows}
-            />
-            <StatCard
-              label="Sycamore rows"
-              value={data.summary.sycamoreRecords}
-              description="Rows in the Sycamore mirror for this exact slice."
-              icon={GitCompareArrows}
-            />
-            <StatCard
-              label="PDF-approved rows"
-              value={data.summary.pdfRecords}
-              description="Rows in canonical approved incidents from the PDF workflow."
-              icon={GitCompareArrows}
-            />
-            <StatCard
-              label="Matched rows"
-              value={data.summary.matched}
-              description="Rows aligned on key fields with no compared field differences."
-              icon={GitCompareArrows}
-            />
-            <StatCard
-              label="Unmatched rows"
-              value={data.summary.sycamoreOnly + data.summary.pdfOnly + data.summary.fieldMismatch}
-              description="Rows needing review because they differ or appear in only one source."
-              icon={GitCompareArrows}
-            />
-          </section>
+          </Panel>
 
           <section className="space-y-5">
             {data.students.map((student) => (
               <Panel key={student.requestedName} className="space-y-5">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
-                      Requested student
-                    </p>
-                    <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">{student.requestedName}</h2>
+                    <h2 className="font-display text-2xl text-[var(--color-ink)]">{student.requestedName}</h2>
                     <p className="mt-2 text-sm text-[var(--color-muted)]">
                       Sycamore matches: {formatStudentList(student) || "none"}.
                     </p>

@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BellDot, RefreshCcw, Send, ShieldAlert } from "lucide-react";
+import { RefreshCcw, Send, ShieldAlert } from "lucide-react";
 
 import {
   Button,
@@ -254,29 +254,15 @@ export function NotificationsClient() {
         </InlineAlert>
       ) : null}
 
-      <section className="grid gap-5 md:grid-cols-3">
-        <SoftPanel className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Queued</p>
-          <p className="font-display text-4xl text-[var(--color-ink)]">{queuedCount}</p>
-          <p className="text-sm leading-7 text-[var(--color-muted)]">Notifications waiting for dispatch.</p>
-        </SoftPanel>
-        <SoftPanel className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Sent</p>
-          <p className="font-display text-4xl text-[var(--color-ink)]">{sentCount}</p>
-          <p className="text-sm leading-7 text-[var(--color-muted)]">Messages delivered successfully by the configured provider.</p>
-        </SoftPanel>
-        <SoftPanel className="space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Failed</p>
-          <p className="font-display text-4xl text-[var(--color-ink)]">{failedCount}</p>
-          <p className="text-sm leading-7 text-[var(--color-muted)]">Notifications requiring retry or manual intervention.</p>
-        </SoftPanel>
-      </section>
-
       <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
         <Panel className="space-y-5">
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Configuration</p>
-            <h2 className="font-display text-3xl text-[var(--color-ink)]">Template and recipient settings</h2>
+            <h2 className="font-display text-2xl text-[var(--color-ink)]">Configuration</h2>
+            <div className="flex flex-wrap gap-2">
+              <StatusBadge tone="warning">{queuedCount} queued</StatusBadge>
+              <StatusBadge tone="success">{sentCount} sent</StatusBadge>
+              <StatusBadge tone={failedCount > 0 ? "danger" : "neutral"}>{failedCount} failed</StatusBadge>
+            </div>
           </div>
 
           <form onSubmit={onSaveConfig} className="space-y-5">
@@ -347,8 +333,7 @@ export function NotificationsClient() {
         <div className="space-y-5">
           <Panel className="space-y-5">
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Dispatch</p>
-              <h2 className="font-display text-3xl text-[var(--color-ink)]">Run the queue</h2>
+              <h2 className="font-display text-2xl text-[var(--color-ink)]">Dispatch</h2>
             </div>
             <div className="grid gap-4 md:grid-cols-[1fr_auto]">
               <Field label="Dispatch limit">
@@ -362,11 +347,10 @@ export function NotificationsClient() {
               </div>
             </div>
             <SoftPanel className="space-y-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Provider</p>
-              <p className="font-semibold text-[var(--color-ink)]">{config.provider}</p>
-              <p className="text-sm leading-7 text-[var(--color-muted)]">
-                The current provider is surfaced here so the operator knows where notifications are being routed.
-              </p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-semibold text-[var(--color-ink)]">Provider</p>
+                <StatusBadge tone="neutral">{config.provider}</StatusBadge>
+              </div>
             </SoftPanel>
           </Panel>
 
@@ -375,9 +359,8 @@ export function NotificationsClient() {
               <div className="rounded-2xl bg-[#fff0ea] p-3 text-[var(--color-danger)]">
                 <ShieldAlert className="h-5 w-5" />
               </div>
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Manual override</p>
-                <h2 className="font-display text-3xl text-[var(--color-ink)]">Queue an exception message</h2>
+              <div className="space-y-1">
+                <h2 className="font-display text-2xl text-[var(--color-ink)]">Queue override</h2>
               </div>
             </div>
 
@@ -415,11 +398,8 @@ export function NotificationsClient() {
 
       <Panel className="space-y-5">
         <div className="flex items-center justify-between gap-3">
-          <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Queue history</p>
-            <h2 className="font-display text-3xl text-[var(--color-ink)]">Recent notifications</h2>
-          </div>
-          <BellDot className="h-5 w-5 text-[var(--color-primary)]" />
+          <h2 className="font-display text-2xl text-[var(--color-ink)]">Recent notifications</h2>
+          <StatusBadge tone="neutral">{notifications.length} rows</StatusBadge>
         </div>
 
         {notifications.length === 0 ? (

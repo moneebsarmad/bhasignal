@@ -7,7 +7,6 @@ import { Database, RefreshCcw, Server, ShieldAlert, Workflow } from "lucide-reac
 import {
   Button,
   InlineAlert,
-  InsightPanel,
   PageHeader,
   Panel,
   StatCard,
@@ -146,56 +145,56 @@ export function DataOpsClient() {
 
       {data ? (
         <>
-          <InsightPanel
-            eyebrow="System posture"
-            title={data.parser.ok ? "Operational surfaces are reachable" : "One or more system surfaces need attention"}
-            description={
-              data.parser.ok
-                ? `Parser connectivity is healthy, storage is running in ${data.storage.label.toLowerCase()} mode, and the latest snapshot was captured at ${new Date(data.generatedAt).toLocaleString()}.`
-                : `Parser connectivity is degraded. Storage remains in ${data.storage.label.toLowerCase()} mode, but ingestion reliability should be treated as at risk until the parser is restored.`
-            }
-          >
-            <div className="flex flex-wrap gap-3">
+          <Panel className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-1">
+              <h2 className="font-display text-2xl text-[var(--color-ink)]">
+                {data.parser.ok ? "Systems reachable" : "Systems need attention"}
+              </h2>
+              <p className="text-sm text-[var(--color-muted)]">
+                Snapshot from {new Date(data.generatedAt).toLocaleString()}.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
               <StatusBadge tone={data.parser.ok ? "success" : "danger"}>
                 Parser {data.parser.ok ? "online" : "offline"}
               </StatusBadge>
               <StatusBadge tone="info">{data.storage.label}</StatusBadge>
             </div>
-          </InsightPanel>
+          </Panel>
 
           <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
             <StatCard
               label="Active jobs"
               value={data.ingestion.activeJobs}
-              description="Parse runs currently pending or processing."
+              description="Pending or processing."
               icon={Workflow}
               href="/ingestion"
             />
             <StatCard
               label="Open review tasks"
               value={data.review.open}
-              description="Queue items waiting on a human decision."
+              description="Waiting on review."
               icon={ShieldAlert}
               href="/review?status=open"
             />
             <StatCard
               label="Queued notifications"
               value={data.backlog.queuedNotifications}
-              description="Messages waiting for dispatch."
+              description="Waiting for dispatch."
               icon={Server}
               href="/notifications"
             />
             <StatCard
               label="Overdue interventions"
               value={data.backlog.overdueInterventions}
-              description="Interventions already past due."
+              description="Past due."
               icon={ShieldAlert}
               href="/students"
             />
             <StatCard
               label="Failed parse runs"
               value={data.ingestion.failedJobs}
-              description="Jobs that need retry or parser investigation."
+              description="Need retry or investigation."
               icon={Database}
               href="/ingestion"
             />
@@ -204,8 +203,7 @@ export function DataOpsClient() {
           <section className="grid gap-5 xl:grid-cols-[1fr_1fr]">
             <Panel className="space-y-5">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Dependencies</p>
-                <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Storage and parser</h2>
+                <h2 className="font-display text-2xl text-[var(--color-ink)]">Dependencies</h2>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">

@@ -42,56 +42,20 @@ export function LoginForm() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-[var(--color-canvas)] px-4 py-8 sm:px-6 lg:px-8">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(17,94,89,0.16),_transparent_34%),radial-gradient(circle_at_bottom_right,_rgba(173,124,44,0.12),_transparent_28%)]" />
-      <div className="relative mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl items-center gap-10 lg:grid-cols-[1.05fr_0.95fr]">
-        <section className="space-y-8">
-          <div className="space-y-4">
-            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-[var(--color-primary)]">
-              {APP_NAME}
-            </p>
-            <div className="space-y-4">
-              <h1 className="max-w-2xl font-display text-5xl leading-[1.02] text-[var(--color-ink)] sm:text-6xl">
-                Clean discipline operations, without spreadsheet drift.
-              </h1>
-              <p className="max-w-xl text-base leading-8 text-[var(--color-muted)]">
-                Review parser output, track intervention thresholds, and manage notification workflows from a single
-                calm admin workspace.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-[1.5rem] border border-white/70 bg-white/85 p-5 shadow-card backdrop-blur">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Trust</p>
-              <p className="mt-3 font-display text-2xl text-[var(--color-ink)]">Manual-first</p>
-              <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
-                Human review remains in the loop before policy and notification actions are triggered.
-              </p>
-            </div>
-            <div className="rounded-[1.5rem] border border-white/70 bg-white/85 p-5 shadow-card backdrop-blur">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Audience</p>
-              <p className="mt-3 font-display text-2xl text-[var(--color-ink)]">Admin focused</p>
-              <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
-                Built for principals, discipline coordinators, and reviewers who need fast operational visibility.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="rounded-[2rem] border border-white/75 bg-[rgba(255,255,255,0.92)] p-6 shadow-hush backdrop-blur sm:p-8">
-          <div className="mb-8 flex items-start justify-between gap-4">
-            <div className="space-y-3">
+      <div className="relative mx-auto flex min-h-[calc(100vh-4rem)] max-w-md items-center">
+        <section className="w-full rounded-[1.5rem] border border-white/75 bg-[rgba(255,255,255,0.92)] p-6 shadow-hush backdrop-blur sm:p-7">
+          <div className="mb-6 flex items-start justify-between gap-4">
+            <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--color-primary)]">
-                Secure Sign In
+                {APP_NAME}
               </p>
-              <div className="space-y-2">
-                <h2 className="font-display text-4xl text-[var(--color-ink)]">Access the console</h2>
-                <p className="text-sm leading-7 text-[var(--color-muted)]">
-                  Use your assigned admin or reviewer credentials to continue into the protected workspace.
-                </p>
-              </div>
+              <h1 className="font-display text-4xl text-[var(--color-ink)]">Sign in</h1>
+              <p className="text-sm leading-6 text-[var(--color-muted)]">
+                Use your admin or reviewer credentials to continue.
+              </p>
             </div>
-            <div className="rounded-2xl bg-[var(--color-primary-soft)] p-3 text-[var(--color-primary)]">
-              <ShieldCheck className="h-5 w-5" />
+            <div className="rounded-xl bg-[var(--color-primary-soft)] p-2.5 text-[var(--color-primary)]">
+              <ShieldCheck className="h-4 w-4" />
             </div>
           </div>
 
@@ -128,8 +92,7 @@ export function LoginForm() {
               </div>
             ) : null}
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-subtle)]">Protected administrative environment</p>
+            <div className="flex justify-end">
               <Button type="submit" variant="primary" size="lg" disabled={isLoading}>
                 {isLoading ? "Signing in..." : "Sign in"}
                 <ArrowRight className="h-4 w-4" />
