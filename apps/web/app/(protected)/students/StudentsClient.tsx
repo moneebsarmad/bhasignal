@@ -550,7 +550,13 @@ export function StudentsClient() {
     [riskRows]
   );
 
-  const currentMode = PAGE_MODES.find((mode) => mode.key === pageMode) ?? PAGE_MODES[0];
+  const currentMode: (typeof PAGE_MODES)[number] =
+    PAGE_MODES.find((mode) => mode.key === pageMode) ??
+    PAGE_MODES[0] ?? {
+      key: "risk",
+      label: "Risk",
+      description: "Prioritize students with the strongest discipline pressure."
+    };
   const selectedBand = selectedSummary ? getDemeritEscalationBand(selectedSummary.totalPoints) : null;
 
   const caseFileSummary = useMemo(() => {
