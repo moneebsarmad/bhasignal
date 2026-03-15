@@ -163,29 +163,31 @@ export function PageHeader({
   );
 }
 
-export function Panel({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn(
-        "rounded-[1.5rem] border border-[var(--color-line)] bg-white/95 p-4 shadow-card backdrop-blur sm:p-5",
-        className
-      )}
-      {...props}
-    />
-  );
-}
+export const Panel = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn(
+      "rounded-[1.5rem] border border-[var(--color-line)] bg-white/95 p-4 shadow-card backdrop-blur sm:p-5",
+      className
+    )}
+    {...props}
+  />
+));
 
-export function SoftPanel({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn(
-        "rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 sm:p-5",
-        className
-      )}
-      {...props}
-    />
-  );
-}
+Panel.displayName = "Panel";
+
+export const SoftPanel = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn(
+      "rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 sm:p-5",
+      className
+    )}
+    {...props}
+  />
+));
+
+SoftPanel.displayName = "SoftPanel";
 
 export function SectionHeader({
   title,
