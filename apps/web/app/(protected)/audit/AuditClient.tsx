@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Eye, RefreshCcw } from "lucide-react";
 
 import {
@@ -59,6 +59,141 @@ const AUDIT_SCOPE_OPTIONS: Array<{
     description: "Queued batches plus background Sycamore job starts, finishes, and failures."
   }
 ];
+
+const PAYLOAD_SUMMARY_LIMIT = 12;
+const PAYLOAD_PRIORITY = [
+  "status",
+  "resultStatus",
+  "triggeredBy",
+  "syncMode",
+  "eventType",
+  "recipient",
+  "studentId",
+  "interventionId",
+  "overallWindow.startDate",
+  "overallWindow.endDate",
+  "window.startDate",
+  "window.endDate",
+  "totalChunks",
+  "completedChunks",
+  "failedChunks",
+  "warningsCount",
+  "recordsDiscovered",
+  "recordsUpserted",
+  "error",
+  "errorMessage"
+] as const;
+
+type PayloadSummaryEntry = {
+  keyPath: string;
+  label: string;
+  value: string;
+};
+
+function humanizeKey(keyPath: string): string {
+  return keyPath
+    .split(".")
+    .flatMap((segment) => segment.split(/(?=[A-Z])/))
+    .map((segment) => segment.replace(/[_-]+/g, " ").trim())
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function formatPayloadValue(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (typeof value === "string") {
+    return value.length > 120 ? `${value.slice(0, 117)}...` : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  }
+  if (value && typeof value === "object") {
+    return `${Object.keys(value as Record<string, unknown>).length} fields`;
+  }
+  return String(value);
+}
+
+function collectPayloadSummaryEntries(
+  value: unknown,
+  parentKey = "",
+  depth = 0
+): PayloadSummaryEntry[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+
+  const entries: PayloadSummaryEntry[] = [];
+  for (const [key, child] of Object.entries(value)) {
+    const keyPath = parentKey ? `${parentKey}.${key}` : key;
+    if (child === null || ["string", "number", "boolean"].includes(typeof child)) {
+      entries.push({
+        keyPath,
+        label: humanizeKey(keyPath),
+        value: formatPayloadValue(child)
+      });
+      continue;
+    }
+
+    if (Array.isArray(child)) {
+      entries.push({
+        keyPath,
+        label: humanizeKey(keyPath),
+        value: formatPayloadValue(child)
+      });
+      continue;
+    }
+
+    if (depth < 1) {
+      entries.push(...collectPayloadSummaryEntries(child, keyPath, depth + 1));
+      continue;
+    }
+
+    entries.push({
+      keyPath,
+      label: humanizeKey(keyPath),
+      value: formatPayloadValue(child)
+    });
+  }
+
+  return entries;
+}
+
+function buildPayloadPresentation(payloadJson: string): {
+  summaryEntries: PayloadSummaryEntry[];
+  formattedJson: string;
+} {
+  try {
+    const parsed = JSON.parse(payloadJson) as unknown;
+    const summaryEntries = collectPayloadSummaryEntries(parsed)
+      .sort((left, right) => {
+        const leftPriority = PAYLOAD_PRIORITY.indexOf(left.keyPath as (typeof PAYLOAD_PRIORITY)[number]);
+        const rightPriority = PAYLOAD_PRIORITY.indexOf(right.keyPath as (typeof PAYLOAD_PRIORITY)[number]);
+        const normalizedLeft = leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority;
+        const normalizedRight = rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority;
+        if (normalizedLeft !== normalizedRight) {
+          return normalizedLeft - normalizedRight;
+        }
+        return left.label.localeCompare(right.label);
+      })
+      .slice(0, PAYLOAD_SUMMARY_LIMIT);
+
+    return {
+      summaryEntries,
+      formattedJson: JSON.stringify(parsed, null, 2)
+    };
+  } catch {
+    return {
+      summaryEntries: [],
+      formattedJson: payloadJson
+    };
+  }
+}
 
 export function AuditClient() {
   const [scope, setScope] = useState<AuditScope>("all");
@@ -155,6 +290,10 @@ export function AuditClient() {
   }
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
+  const selectedPayload = useMemo(
+    () => buildPayloadPresentation(selectedEvent?.payloadJson ?? ""),
+    [selectedEvent?.payloadJson]
+  );
 
   return (
     <div className="space-y-6">
@@ -304,7 +443,7 @@ export function AuditClient() {
                   <StatusBadge tone="neutral">{selectedEvent.entityType}</StatusBadge>
                 </div>
                 <div>
-                  <h2 className="font-display text-2xl text-[var(--color-ink)]">{selectedEvent.id}</h2>
+                  <h2 className="break-all font-display text-2xl text-[var(--color-ink)]">{selectedEvent.id}</h2>
                   <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
                     {new Date(selectedEvent.createdAt).toLocaleString()} • actor {selectedEvent.actor}
                   </p>
@@ -313,16 +452,40 @@ export function AuditClient() {
 
               <SoftPanel className="space-y-3">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Entity reference</p>
-                <p className="font-semibold text-[var(--color-ink)]">
+                <p className="break-all font-semibold text-[var(--color-ink)]">
                   {selectedEvent.entityType}:{selectedEvent.entityId}
                 </p>
               </SoftPanel>
 
               <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Payload</p>
-                <pre className="overflow-x-auto rounded-[1.5rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 font-mono text-xs leading-6 text-[var(--color-muted)]">
-                  {selectedEvent.payloadJson}
-                </pre>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">Payload summary</p>
+                {selectedPayload.summaryEntries.length > 0 ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {selectedPayload.summaryEntries.map((entry) => (
+                      <SoftPanel key={entry.keyPath} className="space-y-1.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                          {entry.label}
+                        </p>
+                        <p className="break-words text-sm font-semibold text-[var(--color-ink)]">{entry.value}</p>
+                      </SoftPanel>
+                    ))}
+                  </div>
+                ) : (
+                  <SoftPanel>
+                    <p className="text-sm text-[var(--color-muted)]">
+                      This event does not expose a compact structured summary, so the full payload is shown below.
+                    </p>
+                  </SoftPanel>
+                )}
+
+                <details className="rounded-[1.5rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-[var(--color-ink)]">
+                    Show full payload JSON
+                  </summary>
+                  <pre className="mt-4 max-h-[26rem] overflow-auto whitespace-pre-wrap break-words rounded-[1rem] bg-white/80 p-4 font-mono text-xs leading-6 text-[var(--color-muted)]">
+                    {selectedPayload.formattedJson}
+                  </pre>
+                </details>
               </div>
             </>
           )}
