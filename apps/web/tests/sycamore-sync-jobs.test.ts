@@ -218,6 +218,67 @@ test("summarizeSycamoreSyncBatch reports the active running job and aggregate co
   assert.equal(summary.progress?.stage, "detail_fetch");
 });
 
+test("summarizeSycamoreSyncBatch exposes failed job details when a chunk fails", () => {
+  const summary = summarizeSycamoreSyncBatch([
+    makeJob({
+      id: "job_success_1",
+      sequenceIndex: 0,
+      totalJobs: 3,
+      status: "succeeded",
+      resultStatus: "success",
+      syncLogId: "sync_success_1",
+      startedAt: "2026-03-20T12:00:00.000Z",
+      completedAt: "2026-03-20T12:02:00.000Z",
+      recordsDiscovered: 12,
+      recordsUpserted: 9,
+      window: { startDate: "2026-03-01", endDate: "2026-03-03" }
+    }),
+    makeJob({
+      id: "job_failed_2",
+      sequenceIndex: 1,
+      totalJobs: 3,
+      status: "failed",
+      resultStatus: null,
+      startedAt: "2026-03-20T12:03:00.000Z",
+      completedAt: "2026-03-20T12:04:00.000Z",
+      errorMessage: "Parser request timed out while fetching student detail.",
+      warnings: ["sycamore_student_overview_discovery_used:2026-03-04:2026-03-06:603"],
+      warningsCount: 1,
+      window: { startDate: "2026-03-04", endDate: "2026-03-06" }
+    }),
+    makeJob({
+      id: "job_success_3",
+      sequenceIndex: 2,
+      totalJobs: 3,
+      status: "succeeded",
+      resultStatus: "success",
+      syncLogId: "sync_success_3",
+      startedAt: "2026-03-20T12:05:00.000Z",
+      completedAt: "2026-03-20T12:06:00.000Z",
+      recordsDiscovered: 7,
+      recordsUpserted: 5,
+      window: { startDate: "2026-03-07", endDate: "2026-03-09" }
+    })
+  ]);
+
+  assert.ok(summary);
+  assert.equal(summary.status, "failed");
+  assert.equal(summary.completedChunks, 3);
+  assert.equal(summary.failedChunks, 1);
+  assert.equal(summary.recordsUpserted, 14);
+  assert.equal(summary.failedJobs.length, 1);
+  assert.deepEqual(summary.failedJobs[0], {
+    jobId: "job_failed_2",
+    sequenceIndex: 1,
+    window: { startDate: "2026-03-04", endDate: "2026-03-06" },
+    syncLogId: null,
+    errorMessage: "Parser request timed out while fetching student detail.",
+    warnings: ["sycamore_student_overview_discovery_used:2026-03-04:2026-03-06:603"],
+    warningsCount: 1,
+    completedAt: "2026-03-20T12:04:00.000Z"
+  });
+});
+
 test("summarizeSycamoreSyncBatch flags stale running jobs from heartbeat age", () => {
   const summary = withEnv(
     {

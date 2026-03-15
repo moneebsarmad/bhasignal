@@ -74,6 +74,19 @@ export interface SycamoreSyncBatchSummary {
   chunkSizeDays: number;
   recordsDiscovered: number;
   recordsUpserted: number;
+  failedJobs: Array<{
+    jobId: string;
+    sequenceIndex: number;
+    window: {
+      startDate: string;
+      endDate: string;
+    };
+    syncLogId: string | null;
+    errorMessage: string | null;
+    warnings: string[];
+    warningsCount: number;
+    completedAt: string | null;
+  }>;
   warnings: string[];
   warningsCount: number;
   createdAt: string;
@@ -320,6 +333,18 @@ export function summarizeSycamoreSyncBatch(
   const runningJob = sorted.find((job) => job.status === "running") ?? null;
   const queuedJob = sorted.find((job) => job.status === "queued") ?? null;
   const activeJob = runningJob ?? queuedJob ?? sorted.at(-1) ?? sorted[0] ?? null;
+  const failedJobs = sorted
+    .filter((job) => job.status === "failed")
+    .map((job) => ({
+      jobId: job.id,
+      sequenceIndex: job.sequenceIndex,
+      window: job.window,
+      syncLogId: job.syncLogId,
+      errorMessage: job.errorMessage,
+      warnings: job.warnings,
+      warningsCount: job.warningsCount,
+      completedAt: job.completedAt
+    }));
   const resultStatuses = sorted.map((job) => job.resultStatus).filter((value): value is SycamoreSyncStatus => Boolean(value));
   const status: SycamoreSyncBatchStatus = runningJob
     ? "running"
@@ -368,6 +393,7 @@ export function summarizeSycamoreSyncBatch(
     chunkSizeDays: chunkSizeDays(sorted),
     recordsDiscovered: sorted.reduce((total, job) => total + job.recordsDiscovered, 0),
     recordsUpserted: sorted.reduce((total, job) => total + job.recordsUpserted, 0),
+    failedJobs,
     warnings: sorted.flatMap((job) => job.warnings),
     warningsCount: sorted.reduce((total, job) => total + job.warningsCount, 0),
     createdAt,

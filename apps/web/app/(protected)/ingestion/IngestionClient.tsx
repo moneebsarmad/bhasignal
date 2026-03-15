@@ -52,6 +52,19 @@ interface SycamoreSyncBatch {
   chunkSizeDays: number;
   recordsDiscovered: number;
   recordsUpserted: number;
+  failedJobs: Array<{
+    jobId: string;
+    sequenceIndex: number;
+    window: {
+      startDate: string;
+      endDate: string;
+    };
+    syncLogId: string | null;
+    errorMessage: string | null;
+    warnings: string[];
+    warningsCount: number;
+    completedAt: string | null;
+  }>;
   warnings: string[];
   warningsCount: number;
   createdAt: string;
@@ -141,6 +154,29 @@ function inclusiveDaySpan(startDate: string, endDate: string): number {
 
 function formatSyncWindow(window: { startDate: string; endDate: string }): string {
   return `${window.startDate} to ${window.endDate}`;
+}
+
+function latestFailedJob(batch: SycamoreSyncBatch): SycamoreSyncBatch["failedJobs"][number] | null {
+  return batch.failedJobs.at(-1) ?? batch.failedJobs[0] ?? null;
+}
+
+function formatFailedBatchDescription(batch: SycamoreSyncBatch): string {
+  const failedJobsLabel = `${batch.failedChunks} of ${batch.totalChunks} background job${batch.totalChunks === 1 ? "" : "s"}`;
+  if (batch.completedChunks === batch.totalChunks) {
+    return `${failedJobsLabel} failed. All queued jobs reached an end state, and completed jobs can include failures.`;
+  }
+  return `${failedJobsLabel} failed while ${batch.completedChunks} of ${batch.totalChunks} queued jobs reached an end state.`;
+}
+
+function formatFailedBatchMessage(batch: SycamoreSyncBatch): string {
+  const failedJob = latestFailedJob(batch);
+  if (failedJob?.errorMessage?.trim()) {
+    return `Job ${failedJob.sequenceIndex + 1} of ${batch.totalChunks} failed for ${formatSyncWindow(failedJob.window)}. ${failedJob.errorMessage.trim()}`;
+  }
+  if (failedJob) {
+    return `Job ${failedJob.sequenceIndex + 1} of ${batch.totalChunks} failed for ${formatSyncWindow(failedJob.window)}.`;
+  }
+  return batch.warnings.join("\n") || "One or more Sycamore background jobs failed.";
 }
 
 function sourceLabel(sourceType: ParseRun["sourceType"]): string {
@@ -718,7 +754,7 @@ export function IngestionClient() {
         if (nextBatch.status !== "queued" && nextBatch.status !== "running") {
           setLastResult({ sycamoreSync: nextBatch });
           if (nextBatch.status === "failed") {
-            setError(nextBatch.warnings.join("\n") || "Sycamore sync failed before any records could be stored.");
+            setError(formatFailedBatchMessage(nextBatch));
           }
           void loadSycamoreSyncJobs();
         }
@@ -756,16 +792,22 @@ export function IngestionClient() {
       if (result.status === "running") {
         return `${syncLabel} Sycamore sync ${result.window.startDate} to ${result.window.endDate} is running in the background. ${result.completedChunks} of ${result.totalChunks} job${result.totalChunks === 1 ? "" : "s"} finished so far.`;
       }
+      if (result.status === "failed") {
+        return `${syncLabel} Sycamore sync ${result.window.startDate} to ${result.window.endDate} finished with failures after storing ${result.recordsUpserted} record${result.recordsUpserted === 1 ? "" : "s"}. ${formatFailedBatchMessage(result)}`;
+      }
       return `${syncLabel} Sycamore sync ${result.window.startDate} to ${result.window.endDate} stored ${result.recordsUpserted} record${result.recordsUpserted === 1 ? "" : "s"}${result.status === "partial" ? " with warnings" : ""}.`;
     }
 
     return null;
   }, [lastResult]);
 
-  const summaryTone = useMemo<"info" | "success">(() => {
+  const summaryTone = useMemo<"info" | "success" | "danger">(() => {
     const sycamoreStatus = lastResult?.sycamoreSync?.status;
     if (sycamoreStatus === "queued" || sycamoreStatus === "running") {
       return "info";
+    }
+    if (sycamoreStatus === "failed") {
+      return "danger";
     }
     return "success";
   }, [lastResult]);
@@ -777,6 +819,9 @@ export function IngestionClient() {
     }
     if (sycamoreStatus === "running") {
       return "Sycamore sync running.";
+    }
+    if (sycamoreStatus === "failed") {
+      return "Sycamore sync finished with failures.";
     }
     return "Latest intake updated.";
   }, [lastResult]);
@@ -802,6 +847,7 @@ export function IngestionClient() {
       ...(selectedWarningBatch?.warnings ?? []),
     ];
   }, [lastResult, selectedWarningBatch]);
+  const primaryFailedJob = syncBatch ? latestFailedJob(syncBatch) : null;
 
   const parsedSyncStudentNames = useMemo(() => parseStudentNamesInput(syncStudentNamesText), [syncStudentNamesText]);
   const hasTargetedSyncFilters = parsedSyncStudentNames.length > 0 || Boolean(syncGrade);
@@ -854,7 +900,7 @@ export function IngestionClient() {
         (syncBatch?.status === "queued"
           ? "This queued Sycamore sync will run when the daily cron advances the queue, or immediately if you use Run next job now. Queued time does not count against the 300-second worker limit."
           : syncBatch?.status === "failed"
-            ? "The background Sycamore sync stopped before the batch could finish."
+            ? formatFailedBatchDescription(syncBatch)
             : syncBatch?.status === "success" || syncBatch?.status === "partial"
               ? "The background Sycamore sync batch has finished."
               : "Preparing the background Sycamore sync."));
@@ -865,7 +911,7 @@ export function IngestionClient() {
         (syncBatch?.status === "queued"
           ? `Queued ${syncBatch.totalChunks} background job${syncBatch.totalChunks === 1 ? "" : "s"} for ${formatSyncWindow(syncBatch.overallWindow)}.`
           : syncBatch?.status === "failed"
-            ? syncBatch.warnings.join("\n") || "The background Sycamore sync failed."
+            ? formatFailedBatchMessage(syncBatch)
             : syncBatch?.status === "success" || syncBatch?.status === "partial"
               ? `Background sync batch finished with ${syncBatch.recordsUpserted} stored row${syncBatch.recordsUpserted === 1 ? "" : "s"}.`
               : "Waiting for the queued Sycamore job to report progress."));
@@ -1047,6 +1093,13 @@ export function IngestionClient() {
                 </InlineAlert>
               ) : null}
 
+              {syncBatch.status === "failed" && primaryFailedJob ? (
+                <InlineAlert tone="danger" title={`Job ${primaryFailedJob.sequenceIndex + 1} failed.`}>
+                  {formatSyncWindow(primaryFailedJob.window)}
+                  {primaryFailedJob.errorMessage?.trim() ? `: ${primaryFailedJob.errorMessage.trim()}` : "."}
+                </InlineAlert>
+              ) : null}
+
               {syncBatch ? (
                 <div className="grid gap-4 md:grid-cols-4">
                   <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
@@ -1082,7 +1135,11 @@ export function IngestionClient() {
                     <p className="mt-2 font-display text-2xl text-[var(--color-ink)]">
                       {syncBatch.completedChunks} / {syncBatch.totalChunks}
                     </p>
-                    <p className="mt-1 text-sm text-[var(--color-muted)]">Each background job is written and tracked separately.</p>
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                      {syncBatch.failedChunks > 0
+                        ? `${syncBatch.failedChunks} failed chunk${syncBatch.failedChunks === 1 ? "" : "s"}; completed includes both successful and failed jobs.`
+                        : "Each background job is written and tracked separately."}
+                    </p>
                   </div>
                   <div className="rounded-[1.25rem] border border-[var(--color-line)] bg-[var(--color-panel)] p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
