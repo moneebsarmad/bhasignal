@@ -88,6 +88,11 @@ interface StudentDetail {
 type PageMode = "risk" | "directory" | "interventions" | "case_file";
 type DetailTab = "overview" | "incidents" | "interventions" | "notifications" | "audit";
 type StatusTone = "neutral" | "info" | "success" | "warning" | "danger";
+type StudentFilterState = {
+  search: string;
+  grade: string;
+  sourceType: "manual_pdf" | "sycamore_api";
+};
 
 const DEFAULT_SOURCE_TYPE = "sycamore_api";
 const DAY_MS = 1000 * 60 * 60 * 24;
@@ -351,16 +356,26 @@ function RiskLane({
   );
 }
 
-export function StudentsClient() {
-  const [draftSearch, setDraftSearch] = useState("");
-  const [draftGrade, setDraftGrade] = useState("");
-  const [draftSourceType, setDraftSourceType] = useState<"manual_pdf" | "sycamore_api">(DEFAULT_SOURCE_TYPE);
-  const [appliedFilters, setAppliedFilters] = useState({
-    search: "",
-    grade: "",
-    sourceType: DEFAULT_SOURCE_TYPE as "manual_pdf" | "sycamore_api"
-  });
-  const [pageMode, setPageMode] = useState<PageMode>("risk");
+export function StudentsClient({
+  initialFilters,
+  initialMode
+}: {
+  initialFilters?: Partial<StudentFilterState>;
+  initialMode?: PageMode;
+}) {
+  const resolvedInitialFilters: StudentFilterState = {
+    search: initialFilters?.search?.trim() ?? "",
+    grade: initialFilters?.grade?.trim() ?? "",
+    sourceType: initialFilters?.sourceType === "manual_pdf" ? "manual_pdf" : DEFAULT_SOURCE_TYPE
+  };
+  const resolvedInitialMode: PageMode =
+    initialMode && PAGE_MODES.some((mode) => mode.key === initialMode) ? initialMode : "risk";
+
+  const [draftSearch, setDraftSearch] = useState(resolvedInitialFilters.search);
+  const [draftGrade, setDraftGrade] = useState(resolvedInitialFilters.grade);
+  const [draftSourceType, setDraftSourceType] = useState<"manual_pdf" | "sycamore_api">(resolvedInitialFilters.sourceType);
+  const [appliedFilters, setAppliedFilters] = useState<StudentFilterState>(resolvedInitialFilters);
+  const [pageMode, setPageMode] = useState<PageMode>(resolvedInitialMode);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [detail, setDetail] = useState<StudentDetail | null>(null);
@@ -409,6 +424,27 @@ export function StudentsClient() {
   useEffect(() => {
     void loadStudents(appliedFilters);
   }, [appliedFilters, loadStudents]);
+
+  useEffect(() => {
+    setDraftSearch((current) => (current === resolvedInitialFilters.search ? current : resolvedInitialFilters.search));
+    setDraftGrade((current) => (current === resolvedInitialFilters.grade ? current : resolvedInitialFilters.grade));
+    setDraftSourceType((current) =>
+      current === resolvedInitialFilters.sourceType ? current : resolvedInitialFilters.sourceType
+    );
+    setAppliedFilters((current) =>
+      current.search === resolvedInitialFilters.search &&
+      current.grade === resolvedInitialFilters.grade &&
+      current.sourceType === resolvedInitialFilters.sourceType
+        ? current
+        : resolvedInitialFilters
+    );
+    setPageMode((current) => (current === resolvedInitialMode ? current : resolvedInitialMode));
+  }, [
+    resolvedInitialFilters.grade,
+    resolvedInitialFilters.search,
+    resolvedInitialFilters.sourceType,
+    resolvedInitialMode
+  ]);
 
   useEffect(() => {
     async function loadDetail() {

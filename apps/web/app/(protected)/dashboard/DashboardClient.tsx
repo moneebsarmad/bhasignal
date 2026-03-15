@@ -2,7 +2,17 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BellDot, RefreshCcw, ShieldCheck, Siren, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  BellDot,
+  ChevronRight,
+  RefreshCcw,
+  ShieldCheck,
+  Siren,
+  Sparkles,
+  Users
+} from "lucide-react";
 
 import {
   Button,
@@ -107,6 +117,21 @@ interface DashboardPayload {
       windowEndDate: string | null;
     } | null;
   };
+}
+
+type ActionQueueRow = DashboardPayload["actionQueue"][number];
+
+interface ActionQueueGradeGroup {
+  grade: string;
+  rows: ActionQueueRow[];
+  studentCount: number;
+  totalPoints: number;
+  queuedNotifications: number;
+  activeInterventions: number;
+  criticalCount: number;
+  highestBandLabel: string;
+  highestBandTone: ActionQueueRow["currentBandTone"];
+  latestIncidentAt: string | null;
 }
 
 function compareGradesAscending(left: string, right: string) {
@@ -287,9 +312,108 @@ function statusRows(record: Record<string, number>) {
     .sort((left, right) => right.count - left.count);
 }
 
+function incidentEpoch(value: string | null) {
+  const epoch = Date.parse(value ?? "");
+  return Number.isFinite(epoch) ? epoch : Number.NEGATIVE_INFINITY;
+}
+
+function sortActionQueueRows(left: ActionQueueRow, right: ActionQueueRow) {
+  if (right.totalPoints !== left.totalPoints) {
+    return right.totalPoints - left.totalPoints;
+  }
+
+  const rightIncidentEpoch = incidentEpoch(right.latestIncidentAt);
+  const leftIncidentEpoch = incidentEpoch(left.latestIncidentAt);
+  if (rightIncidentEpoch !== leftIncidentEpoch) {
+    return rightIncidentEpoch - leftIncidentEpoch;
+  }
+
+  return left.fullName.localeCompare(right.fullName);
+}
+
+function buildActionQueueGroups(rows: ActionQueueRow[]): ActionQueueGradeGroup[] {
+  const groups = new Map<string, ActionQueueGradeGroup>();
+
+  for (const row of rows) {
+    const currentGroup = groups.get(row.grade);
+    if (currentGroup) {
+      currentGroup.rows.push(row);
+      currentGroup.studentCount += 1;
+      currentGroup.totalPoints += row.totalPoints;
+      currentGroup.queuedNotifications += row.queuedNotifications;
+      currentGroup.activeInterventions += row.activeInterventions;
+      currentGroup.criticalCount += row.currentBandTone === "danger" ? 1 : 0;
+      if (incidentEpoch(row.latestIncidentAt) > incidentEpoch(currentGroup.latestIncidentAt)) {
+        currentGroup.latestIncidentAt = row.latestIncidentAt;
+      }
+      continue;
+    }
+
+    groups.set(row.grade, {
+      grade: row.grade,
+      rows: [row],
+      studentCount: 1,
+      totalPoints: row.totalPoints,
+      queuedNotifications: row.queuedNotifications,
+      activeInterventions: row.activeInterventions,
+      criticalCount: row.currentBandTone === "danger" ? 1 : 0,
+      highestBandLabel: row.currentBandLabel,
+      highestBandTone: row.currentBandTone,
+      latestIncidentAt: row.latestIncidentAt
+    });
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      const sortedRows = [...group.rows].sort(sortActionQueueRows);
+      return {
+        ...group,
+        rows: sortedRows,
+        highestBandLabel: sortedRows[0]?.currentBandLabel ?? group.highestBandLabel,
+        highestBandTone: sortedRows[0]?.currentBandTone ?? group.highestBandTone
+      };
+    })
+    .sort(
+      (left, right) =>
+        right.criticalCount - left.criticalCount ||
+        right.studentCount - left.studentCount ||
+        right.totalPoints - left.totalPoints ||
+        compareGradesAscending(left.grade, right.grade)
+    );
+}
+
+function hotspotTone(totalPoints: number): "neutral" | "info" | "success" | "warning" | "danger" {
+  if (totalPoints >= 100) {
+    return "danger";
+  }
+  if (totalPoints > 0) {
+    return "warning";
+  }
+  if (totalPoints < 0) {
+    return "success";
+  }
+  return "neutral";
+}
+
+function hotspotCloudSizeClass(incidentCount: number, maxIncidentCount: number) {
+  const ratio = incidentCount / Math.max(maxIncidentCount, 1);
+
+  if (ratio >= 0.82) {
+    return "min-h-[6rem] max-w-[20rem] px-5 py-4";
+  }
+  if (ratio >= 0.58) {
+    return "min-h-[5.35rem] max-w-[17rem] px-4 py-3.5";
+  }
+  if (ratio >= 0.36) {
+    return "min-h-[4.75rem] max-w-[15rem] px-4 py-3";
+  }
+  return "min-h-[4.15rem] max-w-[13rem] px-3.5 py-2.5";
+}
+
 export function DashboardClient({ canManageSycamore }: { canManageSycamore: boolean }) {
   const [grade, setGrade] = useState("");
   const [sourceType, setSourceType] = useState(DEFAULT_SOURCE_TYPE);
+  const [expandedQueueGrade, setExpandedQueueGrade] = useState<string | null>(null);
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -403,6 +527,11 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
     () => data?.bandCounts.filter((band) => band.count > 0).length ?? 0,
     [data]
   );
+  const actionQueueGroups = useMemo(() => buildActionQueueGroups(data?.actionQueue ?? []), [data]);
+  const selectedActionQueueGroup = useMemo(
+    () => actionQueueGroups.find((group) => group.grade === expandedQueueGrade) ?? actionQueueGroups[0] ?? null,
+    [actionQueueGroups, expandedQueueGrade]
+  );
   const interventionRows = useMemo(() => statusRows(data?.interventionCounts ?? {}), [data]);
   const notificationRows = useMemo(() => statusRows(data?.notificationCounts ?? {}), [data]);
   const parseRows = useMemo(() => statusRows(data?.parseRunStatus ?? {}), [data]);
@@ -410,6 +539,23 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
     () => Math.max(...(data?.recentTrend.map((row) => row.incidentCount) ?? [1]), 1),
     [data]
   );
+  const hotspotCloudRows = useMemo(() => (data?.violationHotspots ?? []).slice(0, 10), [data]);
+  const hotspotRankedRows = useMemo(() => (data?.violationHotspots ?? []).slice(0, 5), [data]);
+  const hotspotMax = useMemo(
+    () => Math.max(...hotspotCloudRows.map((row) => row.incidentCount), 1),
+    [hotspotCloudRows]
+  );
+
+  useEffect(() => {
+    if (!actionQueueGroups.length) {
+      setExpandedQueueGrade(null);
+      return;
+    }
+
+    setExpandedQueueGrade((current) =>
+      current && actionQueueGroups.some((group) => group.grade === current) ? current : actionQueueGroups[0]?.grade ?? null
+    );
+  }, [actionQueueGroups]);
 
   return (
     <div className="space-y-6">
@@ -571,6 +717,9 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                         Needs action now
                       </p>
                       <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Admin action queue</h2>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--color-muted)]">
+                        Grouped by grade so the dashboard stays short. Expand one grade here, then jump to Students for the full case list.
+                      </p>
                     </div>
                     <div className="flex flex-wrap gap-3">
                       <Link href="/students" className={buttonStyles({ variant: "secondary" })}>
@@ -588,61 +737,137 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                       description="This filtered operational slice currently has no students at 10 or more stored points."
                     />
                   ) : (
-                    <div className={tableShellClassName}>
-                      <div className="overflow-x-auto">
-                        <table className={tableClassName}>
-                          <thead>
-                            <tr>
-                              <th className={tableHeadCellClassName}>Student</th>
-                              <th className={tableHeadCellClassName}>Current band</th>
-                              <th className={tableHeadCellClassName}>Parent communication</th>
-                              <th className={tableHeadCellClassName}>Admin action</th>
-                              <th className={tableHeadCellClassName}>Follow-through</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-[var(--color-line)]">
-                            {data.actionQueue.map((row) => (
-                              <tr key={row.studentId}>
-                                <td className={tableCellClassName}>
+                    <div className="grid gap-4 xl:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)]">
+                      <div className="grid gap-3">
+                        {actionQueueGroups.map((group) => (
+                          <button
+                            key={group.grade}
+                            type="button"
+                            onClick={() => setExpandedQueueGrade(group.grade)}
+                            className={cn(
+                              "rounded-[1.35rem] border p-4 text-left transition",
+                              selectedActionQueueGroup?.grade === group.grade
+                                ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] shadow-card"
+                                : "border-[var(--color-line)] bg-[var(--color-soft-surface)] hover:border-[var(--color-primary)] hover:bg-white"
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
+                                  Grade {group.grade}
+                                </p>
+                                <p className="font-display text-3xl text-[var(--color-ink)]">{group.studentCount}</p>
+                                <p className="text-sm text-[var(--color-muted)]">
+                                  student{group.studentCount === 1 ? "" : "s"} currently above the ladder
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <StatusBadge tone={group.highestBandTone}>{group.highestBandLabel}</StatusBadge>
+                                <ChevronRight
+                                  className={cn(
+                                    "h-4 w-4 text-[var(--color-subtle)] transition",
+                                    selectedActionQueueGroup?.grade === group.grade ? "translate-x-1 text-[var(--color-primary)]" : ""
+                                  )}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              <StatusBadge tone="neutral">{group.totalPoints} pts</StatusBadge>
+                              <StatusBadge tone="warning">{group.queuedNotifications} queued</StatusBadge>
+                              <StatusBadge tone="info">{group.activeInterventions} interventions</StatusBadge>
+                              {group.criticalCount > 0 ? (
+                                <StatusBadge tone="danger">{group.criticalCount} at 35+</StatusBadge>
+                              ) : null}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+
+                      {selectedActionQueueGroup ? (
+                        <SoftPanel className="space-y-5 border-white/80 bg-[linear-gradient(140deg,rgba(17,94,89,0.08),rgba(255,255,255,0.96)_42%,rgba(173,124,44,0.08))]">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="space-y-1">
+                              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-primary)]">
+                                Expanded queue
+                              </p>
+                              <h3 className="font-display text-3xl text-[var(--color-ink)]">
+                                Grade {selectedActionQueueGroup.grade}
+                              </h3>
+                              <p className="max-w-2xl text-sm leading-6 text-[var(--color-muted)]">
+                                Previewing the highest-pressure students in this grade. Use Students for the full filtered roster and case-file view.
+                              </p>
+                            </div>
+                            <Link
+                              href={{
+                                pathname: "/students",
+                                query: {
+                                  grade: selectedActionQueueGroup.grade,
+                                  sourceType: data.filters.sourceType,
+                                  mode: "risk"
+                                }
+                              }}
+                              className={buttonStyles({ variant: "secondary" })}
+                            >
+                              Open grade in Students
+                              <ArrowUpRight className="h-4 w-4" />
+                            </Link>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {selectedActionQueueGroup.rows.slice(0, 4).map((row) => (
+                              <article key={row.studentId} className="rounded-[1.2rem] border border-white/90 bg-white/90 p-4 shadow-card">
+                                <div className="flex items-start justify-between gap-3">
                                   <div className="space-y-1">
                                     <p className="font-semibold text-[var(--color-ink)]">{row.fullName}</p>
                                     <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">
-                                      Grade {row.grade} • {row.totalPoints} pts
-                                    </p>
-                                    <p className="text-sm text-[var(--color-muted)]">
-                                      {row.latestIncidentAt
-                                        ? `Latest incident ${new Date(row.latestIncidentAt).toLocaleDateString()}`
-                                        : "No recent incident date"}
+                                      {row.totalPoints} pts • {row.latestIncidentAt
+                                        ? new Date(row.latestIncidentAt).toLocaleDateString()
+                                        : "No recent incident"}
                                     </p>
                                   </div>
-                                </td>
-                                <td className={tableCellClassName}>
-                                  <div className="space-y-2">
-                                    <StatusBadge tone={row.currentBandTone}>{row.currentBandLabel}</StatusBadge>
-                                    <p className="text-sm leading-7 text-[var(--color-muted)]">{row.policyImpact}</p>
+                                  <StatusBadge tone={row.currentBandTone}>{row.currentBandLabel}</StatusBadge>
+                                </div>
+
+                                <div className="mt-4 space-y-3 text-sm leading-6">
+                                  <div>
+                                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-subtle)]">
+                                      Parent
+                                    </p>
+                                    <p className="mt-1 text-[var(--color-ink)]">{row.parentCommunication}</p>
                                   </div>
-                                </td>
-                                <td className={tableCellClassName}>
-                                  <p className="text-sm leading-7 text-[var(--color-ink)]">{row.parentCommunication}</p>
-                                </td>
-                                <td className={tableCellClassName}>
-                                  <div className="space-y-2">
-                                    <p className="text-sm font-semibold text-[var(--color-ink)]">{row.adminAction}</p>
-                                    <p className="text-sm leading-7 text-[var(--color-muted)]">{row.adminMessage}</p>
+                                  <div>
+                                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-subtle)]">
+                                      Admin
+                                    </p>
+                                    <p className="mt-1 font-semibold text-[var(--color-ink)]">{row.adminAction}</p>
+                                    <p className="mt-1 text-[var(--color-muted)]">{row.adminMessage}</p>
                                   </div>
-                                </td>
-                                <td className={tableCellClassName}>
-                                  <div className="space-y-1 text-sm text-[var(--color-muted)]">
-                                    <p>{row.activeInterventions} active interventions</p>
-                                    <p>{row.queuedNotifications} queued notifications</p>
-                                    <p>{row.failedNotifications} failed notifications</p>
-                                  </div>
-                                </td>
-                              </tr>
+                                </div>
+
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                  <StatusBadge tone="info">{row.activeInterventions} interventions</StatusBadge>
+                                  <StatusBadge tone="warning">{row.queuedNotifications} queued</StatusBadge>
+                                  {row.failedNotifications > 0 ? (
+                                    <StatusBadge tone="danger">{row.failedNotifications} failed</StatusBadge>
+                                  ) : null}
+                                </div>
+                              </article>
                             ))}
-                          </tbody>
-                        </table>
-                      </div>
+                          </div>
+
+                          {selectedActionQueueGroup.rows.length > 4 ? (
+                            <InlineAlert tone="info" title={`${selectedActionQueueGroup.rows.length - 4} more students are hidden in this preview.`}>
+                              Open Grade {selectedActionQueueGroup.grade} in Students to review the full queue and drill into case files.
+                            </InlineAlert>
+                          ) : null}
+                        </SoftPanel>
+                      ) : (
+                        <EmptyState
+                          title="Select a grade"
+                          description="Choose a grade from the left to preview the students who currently need communication or admin follow-through."
+                        />
+                      )}
                     </div>
                   )}
                 </Panel>
@@ -705,7 +930,12 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                       </p>
                       <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Most common stored violations</h2>
                     </div>
-                    <StatusBadge tone="info">{data.violationHotspots.length} rows</StatusBadge>
+                    <div className="flex flex-wrap gap-2">
+                      <StatusBadge tone="info">{data.violationHotspots.length} rows</StatusBadge>
+                      <Link href="/reports" className={buttonStyles({ variant: "ghost", size: "sm" })}>
+                        Open analytics
+                      </Link>
+                    </div>
                   </div>
 
                   {data.violationHotspots.length === 0 ? (
@@ -714,18 +944,70 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                       description="Stored violations will appear once the selected source mode contains incident history."
                     />
                   ) : (
-                    <div className="space-y-3">
-                      {data.violationHotspots.map((row) => (
-                        <SoftPanel key={row.label} className="space-y-2">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold text-[var(--color-ink)]">{row.label}</p>
-                              <p className="text-sm text-[var(--color-muted)]">{row.incidentCount} incidents</p>
-                            </div>
-                            <StatusBadge tone="warning">{row.totalPoints} pts</StatusBadge>
+                    <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+                      <div className="dashboard-cloud-field">
+                        <span className="dashboard-cloud-orb dashboard-cloud-orb-a" />
+                        <span className="dashboard-cloud-orb dashboard-cloud-orb-b" />
+                        <span className="dashboard-cloud-orb dashboard-cloud-orb-c" />
+
+                        <div className="relative z-[1] space-y-4">
+                          <div className="flex items-center gap-2 text-[var(--color-primary)]">
+                            <Sparkles className="h-4 w-4" />
+                            <p className="text-xs font-semibold uppercase tracking-[0.22em]">Concept cloud</p>
                           </div>
-                        </SoftPanel>
-                      ))}
+                          <div className="flex flex-wrap items-center gap-3">
+                            {hotspotCloudRows.map((row, index) => (
+                              <div
+                                key={row.label}
+                                className={cn(
+                                  "dashboard-cloud-pill rounded-[1.3rem] border bg-white/85 shadow-[0_12px_30px_rgba(17,94,89,0.08)] backdrop-blur",
+                                  hotspotCloudSizeClass(row.incidentCount, hotspotMax)
+                                )}
+                                style={{
+                                  animationDelay: `${index * 0.45}s`,
+                                  animationDuration: `${6.8 + (index % 4) * 0.9}s`
+                                }}
+                              >
+                                <p className="text-balance font-semibold leading-6 text-[var(--color-ink)]">{row.label}</p>
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  <StatusBadge tone="neutral">{row.incidentCount} incidents</StatusBadge>
+                                  <StatusBadge tone={hotspotTone(row.totalPoints)}>{row.totalPoints} pts</StatusBadge>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {hotspotRankedRows.map((row, index) => (
+                          <SoftPanel key={row.label} className="space-y-3 border-white/80 bg-white/85">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                                  #{index + 1} hotspot
+                                </p>
+                                <p className="font-semibold leading-6 text-[var(--color-ink)]">{row.label}</p>
+                              </div>
+                              <StatusBadge tone={hotspotTone(row.totalPoints)}>{row.totalPoints} pts</StatusBadge>
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between gap-3 text-sm text-[var(--color-muted)]">
+                                <p>{row.incidentCount} incidents</p>
+                                <p>{row.totalPoints} net pts</p>
+                              </div>
+                              <div className="h-2 rounded-full bg-[var(--color-soft-surface)]">
+                                <div
+                                  className="h-2 rounded-full bg-[linear-gradient(90deg,var(--color-primary),rgba(173,124,44,0.55))]"
+                                  style={{
+                                    width: `${Math.max((row.incidentCount / hotspotMax) * 100, row.incidentCount > 0 ? 12 : 0)}%`
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </SoftPanel>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </Panel>
