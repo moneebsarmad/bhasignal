@@ -14,8 +14,9 @@ export interface DataOpsSnapshot {
     detail: string;
   };
   parser: {
-    ok: boolean;
-    baseUrl: string;
+    configured: boolean;
+    ok: boolean | null;
+    baseUrl: string | null;
     status?: number;
     error?: string;
   };
@@ -147,6 +148,15 @@ function summarizeParseRuns(parseRuns: Awaited<ReturnType<StorageRepositories["p
 }
 
 async function probeParser(): Promise<DataOpsSnapshot["parser"]> {
+  const configuredBaseUrl = process.env.PARSER_BASE_URL?.trim() || null;
+  if (!configuredBaseUrl) {
+    return {
+      configured: false,
+      ok: null,
+      baseUrl: null
+    };
+  }
+
   const baseUrl = parserBaseUrl();
   const timeoutMs = parserRequestTimeoutMs();
   const controller = new AbortController();
@@ -156,6 +166,7 @@ async function probeParser(): Promise<DataOpsSnapshot["parser"]> {
     const response = await fetch(`${baseUrl}/health`, { cache: "no-store", signal: controller.signal });
     if (!response.ok) {
       return {
+        configured: true,
         ok: false,
         baseUrl,
         status: response.status,
@@ -163,12 +174,14 @@ async function probeParser(): Promise<DataOpsSnapshot["parser"]> {
       };
     }
     return {
+      configured: true,
       ok: true,
       baseUrl,
       status: response.status
     };
   } catch (error) {
     return {
+      configured: true,
       ok: false,
       baseUrl,
       error:

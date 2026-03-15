@@ -26,8 +26,9 @@ interface DataOpsSnapshot {
     detail: string;
   };
   parser: {
-    ok: boolean;
-    baseUrl: string;
+    configured: boolean;
+    ok: boolean | null;
+    baseUrl: string | null;
     status?: number;
     error?: string;
   };
@@ -123,6 +124,10 @@ export function DataOpsClient() {
     void loadStatus();
   }, [loadStatus]);
 
+  const parserNeedsAttention = Boolean(data?.parser.configured && data.parser.ok === false);
+  const sycamoreNeedsAttention = Boolean(data?.sycamore.error);
+  const systemsNeedAttention = parserNeedsAttention || sycamoreNeedsAttention;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -148,15 +153,15 @@ export function DataOpsClient() {
           <Panel className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="space-y-1">
               <h2 className="font-display text-2xl text-[var(--color-ink)]">
-                {data.parser.ok ? "Systems reachable" : "Systems need attention"}
+                {systemsNeedAttention ? "Systems need attention" : "Systems reachable"}
               </h2>
               <p className="text-sm text-[var(--color-muted)]">
                 Snapshot from {new Date(data.generatedAt).toLocaleString()}.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <StatusBadge tone={data.parser.ok ? "success" : "danger"}>
-                Parser {data.parser.ok ? "online" : "offline"}
+              <StatusBadge tone={!data.parser.configured ? "neutral" : data.parser.ok ? "success" : "danger"}>
+                {!data.parser.configured ? "Parser not configured" : data.parser.ok ? "Parser online" : "Parser offline"}
               </StatusBadge>
               <StatusBadge tone="info">{data.storage.label}</StatusBadge>
             </div>
@@ -221,11 +226,15 @@ export function DataOpsClient() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold text-[var(--color-ink)]">Parser service</p>
-                      <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">{data.parser.baseUrl}</p>
+                      <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
+                        {data.parser.baseUrl ?? "No parser base URL configured for this environment."}
+                      </p>
                       {data.parser.error ? <p className="mt-2 text-sm text-[var(--color-danger)]">{data.parser.error}</p> : null}
                     </div>
-                    <StatusBadge tone={data.parser.ok ? "success" : "danger"}>
-                      {data.parser.ok ? "healthy" : "degraded"}
+                    <StatusBadge
+                      tone={!data.parser.configured ? "neutral" : data.parser.ok ? "success" : "danger"}
+                    >
+                      {!data.parser.configured ? "not configured" : data.parser.ok ? "healthy" : "degraded"}
                     </StatusBadge>
                   </div>
                 </Panel>
@@ -352,7 +361,7 @@ export function DataOpsClient() {
               <div className="flex items-end justify-between gap-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">Failures</p>
-                  <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Recent operational failures</h2>
+                  <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Recent workflow failures</h2>
                 </div>
                 <StatusBadge tone={data.recentFailures.length > 0 ? "warning" : "success"}>
                   {data.recentFailures.length} surfaced

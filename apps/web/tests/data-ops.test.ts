@@ -47,6 +47,36 @@ test.after(() => {
   globalThis.fetch = originalFetch;
 });
 
+test("buildDataOpsSnapshot marks parser as not configured when no parser URL is set", async () => {
+  const storage = createInMemoryStorage({
+    parseRuns: [],
+    rawIncidents: [],
+    reviewTasks: []
+  });
+
+  globalThis.fetch = async () => {
+    throw new Error("parser fetch should not run when the parser is not configured");
+  };
+
+  await withEnv(
+    {
+      PARSER_BASE_URL: undefined,
+      SYCAMORE_API_ENABLED: "false",
+      SYCAMORE_ACCESS_TOKEN: undefined,
+      SYCAMORE_API_ACCESS_TOKEN: undefined,
+      SYCAMORE_API_TOKEN: undefined,
+      SYCAMORE_SCHOOL_ID: undefined
+    },
+    async () => {
+      const snapshot = await buildDataOpsSnapshot(storage);
+
+      assert.equal(snapshot.parser.configured, false);
+      assert.equal(snapshot.parser.ok, null);
+      assert.equal(snapshot.parser.baseUrl, null);
+    }
+  );
+});
+
 test("buildDataOpsSnapshot exposes ingestion breakdown by source and latest direct Sycamore sync metadata", async () => {
   const parseRuns: ParseRun[] = [
     {
