@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { queueManualOverrideNotification } from "@/lib/notifications";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 const overrideSchema = z.object({
   studentId: z.string().min(1),
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   try {
     const notification = await queueManualOverrideNotification({
       storage,

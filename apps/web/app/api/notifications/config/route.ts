@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getNotificationConfig, parseNotificationConfig, saveNotificationConfig } from "@/lib/notifications";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 export async function GET() {
   const session = getCurrentSession();
@@ -11,7 +11,7 @@ export async function GET() {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   const config = await getNotificationConfig(storage);
   return NextResponse.json({ config });
 }
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   const config = await saveNotificationConfig({
     storage,
     actorEmail: session.email,

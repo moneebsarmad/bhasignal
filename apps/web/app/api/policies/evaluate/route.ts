@@ -4,7 +4,7 @@ import { z } from "zod";
 import { queueNotificationsForInterventions } from "@/lib/notifications";
 import { evaluatePolicyAndInterventions } from "@/lib/policies";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 const evaluatePayloadSchema = z.object({
   policyVersion: z.number().int().positive().optional(),
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
 
   try {
     const evaluation = await evaluatePolicyAndInterventions({

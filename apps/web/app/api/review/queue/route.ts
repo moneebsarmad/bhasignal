@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { listReviewQueue } from "@/lib/review";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 const VALID_STATUSES = new Set(["all", "open", "approved", "rejected", "edited"]);
 const VALID_CONFIDENCE = new Set(["all", "low", "medium", "high", "unknown"]);
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
 
   const items = await listReviewQueue(storage, {
     status: statusRaw as "all" | "open" | "approved" | "rejected" | "edited",

@@ -49,3 +49,11 @@ export function createStorageAdapter(): AppStorageAdapter {
   }
   return localAdapterSingleton;
 }
+
+export async function prepareStorage(storage: AppStorageAdapter): Promise<void> {
+  if (hasSupabaseEnv()) {
+    return;
+  }
+
+  await storage.ensureSchema();
+}

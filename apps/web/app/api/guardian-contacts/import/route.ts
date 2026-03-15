@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { importGuardianContactsCsv } from "@/lib/guardian-contacts";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 const importSchema = z.object({
   csv: z.string().min(1)
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   const summary = await importGuardianContactsCsv({
     storage,
     actorEmail: session.email,

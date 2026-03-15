@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 import { buildStudentDetailSnapshot, normalizeStudentSourceType } from "@/lib/student-profiles";
 
 interface RouteContext {
@@ -17,7 +17,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
 
   const studentId = context.params.studentId;
   const sourceType = normalizeStudentSourceType(_request.nextUrl.searchParams.get("sourceType") || undefined);

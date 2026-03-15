@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { syncGuardianContactsFromSycamore } from "@/lib/guardian-contacts";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 export async function POST() {
   const session = getCurrentSession();
@@ -14,7 +14,7 @@ export async function POST() {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
 
   try {
     const summary = await syncGuardianContactsFromSycamore({

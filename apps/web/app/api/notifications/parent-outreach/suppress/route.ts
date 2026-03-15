@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 import { suppressParentOutreachNotifications } from "@/lib/notifications";
 
 const suppressSchema = z.object({
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   const summary = await suppressParentOutreachNotifications({
     storage,
     actorEmail: session.email,

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { type AppStorageAdapter } from "@/lib/local-storage-adapter";
 import { createSupabaseServerClient } from "@/lib/supabase-server-client";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 import { upsertRosterStudent } from "@/lib/student-identity";
 import {
   createSupabaseSycamoreStore,
@@ -1381,7 +1381,7 @@ export async function backfillSycamoreStudentLinks(input?: {
 
   await store.ensureSchema();
   if (storage) {
-    await storage.ensureSchema();
+    await prepareStorage(storage);
   }
 
   return syncSycamoreRosterLinks({
@@ -1411,7 +1411,7 @@ export async function runSycamoreDirectSync(input: RunSycamoreDirectSyncInput): 
 
   await store.ensureSchema();
   if (storage) {
-    await storage.ensureSchema();
+    await prepareStorage(storage);
   }
 
   const plan = input.resolvedPlan ?? (await resolveSyncPlan(store, request));

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { dispatchNotificationQueue } from "@/lib/notifications";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 const dispatchSchema = z.object({
   limit: z.number().int().positive().max(500).optional()
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   const summary = await dispatchNotificationQueue({
     storage,
     actorEmail: session.email,

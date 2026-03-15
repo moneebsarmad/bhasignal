@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { approveParentOutreachNotifications } from "@/lib/notifications";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 const approveSchema = z.object({
   notificationIds: z.array(z.string().min(1)).min(1)
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   const summary = await approveParentOutreachNotifications({
     storage,
     actorEmail: session.email,

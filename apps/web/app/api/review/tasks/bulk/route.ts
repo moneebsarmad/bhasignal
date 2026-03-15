@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { applyBulkReviewAction, bulkReviewActionSchema } from "@/lib/review";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 export async function POST(request: NextRequest) {
   const session = getCurrentSession();
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
 
   try {
     const result = await applyBulkReviewAction({

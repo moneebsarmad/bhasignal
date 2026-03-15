@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { buildReportSnapshot, readReportFilters, toCsv } from "@/lib/reporting";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 const VALID_DATASETS = new Set(["students", "grades", "reasons"]);
 
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
 
   const snapshot = await buildReportSnapshot(storage, readReportFilters(request.nextUrl.searchParams));
   const rows =

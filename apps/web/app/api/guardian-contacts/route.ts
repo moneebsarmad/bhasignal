@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 export async function GET() {
   const session = getCurrentSession();
@@ -10,7 +10,7 @@ export async function GET() {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   const [contacts, students] = await Promise.all([
     storage.guardianContacts.list(),
     storage.students.list()

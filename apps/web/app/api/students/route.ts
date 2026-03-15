@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 import { buildStudentDirectoryRows, normalizeStudentSourceType } from "@/lib/student-profiles";
 
 export async function GET(request: NextRequest) {
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   const sourceType = normalizeStudentSourceType(request.nextUrl.searchParams.get("sourceType") || undefined);
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
 
   const rows = await buildStudentDirectoryRows(storage, {
     search,

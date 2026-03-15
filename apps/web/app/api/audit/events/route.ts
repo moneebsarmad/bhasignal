@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 type AuditScope = "all" | "sycamore_async";
 
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
   const limit = limitRaw ? Number(limitRaw) : 200;
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
   let events = await storage.auditEvents.list();
 
   events = events.filter((event) => matchesScope(event, scope));

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { applyReviewAction, reviewActionSchema } from "@/lib/review";
 import { getCurrentSession } from "@/lib/session";
-import { createStorageAdapter } from "@/lib/storage";
+import { createStorageAdapter, prepareStorage } from "@/lib/storage";
 
 interface RouteContext {
   params: {
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   const storage = createStorageAdapter();
-  await storage.ensureSchema();
+  await prepareStorage(storage);
 
   try {
     const result = await applyReviewAction({
