@@ -186,6 +186,17 @@ interface AnalyticsSnapshot {
 
 const DEFAULT_SOURCE_TYPE = "sycamore_api";
 
+function compareGradesAscending(left: string, right: string) {
+  const leftGrade = Number(left);
+  const rightGrade = Number(right);
+
+  if (Number.isFinite(leftGrade) && Number.isFinite(rightGrade)) {
+    return leftGrade - rightGrade;
+  }
+
+  return left.localeCompare(right, undefined, { numeric: true });
+}
+
 function toneForStatus(status: string): "neutral" | "info" | "success" | "warning" | "danger" {
   if (status === "completed" || status === "sent") {
     return "success";
@@ -329,6 +340,14 @@ export function DeepAnalytics({ embedded = false }: { embedded?: boolean }) {
   useEffect(() => {
     void loadSnapshot();
   }, [loadSnapshot]);
+
+  const sortedGradePressureRows = useMemo(
+    () =>
+      data
+        ? [...data.gradePressureRows].sort((left, right) => compareGradesAscending(left.grade, right.grade))
+        : [],
+    [data]
+  );
 
   function onApplyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -545,9 +564,9 @@ export function DeepAnalytics({ embedded = false }: { embedded?: boolean }) {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[var(--color-line)]">
-                        {data.gradePressureRows.map((row) => (
+                        {sortedGradePressureRows.map((row) => (
                           <tr key={row.grade}>
-                            <td className={tableCellClassName}>Grade {row.grade}</td>
+                            <td className={cn(tableCellClassName, "whitespace-nowrap")}>Grade {row.grade}</td>
                             <td className={tableCellClassName}>{formatNumber(row.activeStudents)}</td>
                             <td className={tableCellClassName}>{formatNumber(row.studentsInvolved)}</td>
                             <td className={tableCellClassName}>{row.incidentsPer100}</td>

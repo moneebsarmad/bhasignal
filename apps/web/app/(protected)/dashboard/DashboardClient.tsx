@@ -109,6 +109,17 @@ interface DashboardPayload {
   };
 }
 
+function compareGradesAscending(left: string, right: string) {
+  const leftGrade = Number(left);
+  const rightGrade = Number(right);
+
+  if (Number.isFinite(leftGrade) && Number.isFinite(rightGrade)) {
+    return leftGrade - rightGrade;
+  }
+
+  return left.localeCompare(right, undefined, { numeric: true });
+}
+
 interface SycamoreSyncBatchSummary {
   syncLogId: string | null;
   status: "queued" | "running" | "success" | "partial" | "failed";
@@ -319,6 +330,14 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
   useEffect(() => {
     void loadMetrics();
   }, [loadMetrics]);
+
+  const sortedGradePressure = useMemo(
+    () =>
+      data
+        ? [...data.gradePressure].sort((left, right) => compareGradesAscending(left.grade, right.grade))
+        : [],
+    [data]
+  );
 
   async function onRunSycamoreSync() {
     setIsSyncingSycamore(true);
@@ -636,7 +655,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                       <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
                         Grade pressure
                       </p>
-                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Where the burden is highest</h2>
+                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Pressure by grade</h2>
                     </div>
                     <StatusBadge tone="info">{data.gradePressure.length} grades</StatusBadge>
                   </div>
@@ -661,9 +680,9 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-[var(--color-line)]">
-                            {data.gradePressure.map((row) => (
+                            {sortedGradePressure.map((row) => (
                               <tr key={row.grade}>
-                                <td className={tableCellClassName}>Grade {row.grade}</td>
+                                <td className={cn(tableCellClassName, "whitespace-nowrap")}>Grade {row.grade}</td>
                                 <td className={tableCellClassName}>{row.studentCount}</td>
                                 <td className={tableCellClassName}>{row.incidentCount}</td>
                                 <td className={tableCellClassName}>{row.totalPoints}</td>
