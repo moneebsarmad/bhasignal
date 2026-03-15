@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
   const status = request.nextUrl.searchParams.get("status");
   const studentId = request.nextUrl.searchParams.get("studentId");
   const channel = request.nextUrl.searchParams.get("channel");
+  const kind = request.nextUrl.searchParams.get("kind");
 
   const storage = createStorageAdapter();
   await storage.ensureSchema();
@@ -25,6 +26,9 @@ export async function GET(request: NextRequest) {
   }
   if (channel) {
     notifications = notifications.filter((notification) => notification.channel === channel);
+  }
+  if (kind) {
+    notifications = notifications.filter((notification) => (notification.kind ?? "policy") === kind);
   }
 
   notifications.sort((left, right) => {

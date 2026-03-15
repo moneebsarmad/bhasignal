@@ -1,6 +1,7 @@
 import type {
   ApprovedIncident,
   AuditEvent,
+  GuardianContact,
   Intervention,
   Notification,
   ParseRun,
@@ -15,6 +16,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   ApprovedIncidentRepository,
   AuditEventRepository,
+  GuardianContactRepository,
   InterventionRepository,
   NotificationRepository,
   ParseRunRepository,
@@ -196,6 +198,42 @@ function createDefinitions() {
       active: value.active,
       created_at: value.createdAt,
       updated_at: value.updatedAt
+    })
+  };
+
+  const guardianContacts: TableDefinition<GuardianContact> = {
+    table: "guardian_contacts",
+    primaryKey: "id",
+    parseRow: (row) =>
+      domainSchemas.guardianContact.parse({
+        id: cell(row, "id"),
+        studentId: cell(row, "student_id"),
+        guardianName: nullableCell(row, "guardian_name"),
+        relationship: nullableCell(row, "relationship"),
+        email: nullableCell(row, "email"),
+        phone: nullableCell(row, "phone"),
+        isPrimary: boolCell(row, "is_primary"),
+        allowEmail: boolCell(row, "allow_email"),
+        sourceType: cell(row, "source_type") || "manual",
+        sourceRecordId: nullableCell(row, "source_record_id"),
+        lastSyncedAt: nullableCell(row, "last_synced_at"),
+        isActive: boolCell(row, "is_active"),
+        notes: cell(row, "notes")
+      }),
+    serialize: (value) => ({
+      id: value.id,
+      student_id: value.studentId,
+      guardian_name: value.guardianName,
+      relationship: value.relationship,
+      email: value.email,
+      phone: value.phone,
+      is_primary: value.isPrimary,
+      allow_email: value.allowEmail,
+      source_type: value.sourceType,
+      source_record_id: value.sourceRecordId,
+      last_synced_at: value.lastSyncedAt,
+      is_active: value.isActive,
+      notes: value.notes
     })
   };
 
@@ -442,7 +480,18 @@ function createDefinitions() {
         status: cell(row, "status"),
         providerId: cell(row, "provider_id"),
         sentAt: nullableCell(row, "sent_at"),
-        error: cell(row, "error")
+        error: cell(row, "error"),
+        kind: nullableCell(row, "kind") ?? undefined,
+        bandId: nullableCell(row, "band_id"),
+        templateKey: nullableCell(row, "template_key"),
+        draftSubject: nullableCell(row, "draft_subject"),
+        draftBody: nullableCell(row, "draft_body"),
+        approvedBy: nullableCell(row, "approved_by"),
+        approvedAt: nullableCell(row, "approved_at"),
+        suppressedAt: nullableCell(row, "suppressed_at"),
+        suppressedReason: nullableCell(row, "suppressed_reason"),
+        guardianContactId: nullableCell(row, "guardian_contact_id"),
+        metadataJson: cell(row, "metadata_json") || "{}"
       }),
     serialize: (value) => ({
       id: value.id,
@@ -453,7 +502,18 @@ function createDefinitions() {
       status: value.status,
       provider_id: value.providerId,
       sent_at: value.sentAt,
-      error: value.error
+      error: value.error,
+      kind: value.kind ?? "policy",
+      band_id: value.bandId ?? null,
+      template_key: value.templateKey ?? null,
+      draft_subject: value.draftSubject ?? null,
+      draft_body: value.draftBody ?? null,
+      approved_by: value.approvedBy ?? null,
+      approved_at: value.approvedAt ?? null,
+      suppressed_at: value.suppressedAt ?? null,
+      suppressed_reason: value.suppressedReason ?? null,
+      guardian_contact_id: value.guardianContactId ?? null,
+      metadata_json: value.metadataJson ?? "{}"
     })
   };
 
@@ -483,6 +543,7 @@ function createDefinitions() {
 
   return {
     students,
+    guardianContacts,
     rawIncidents,
     approvedIncidents,
     parseRuns,
@@ -506,6 +567,26 @@ class SupabaseStudentRepository implements StudentRepository {
   }
 
   list(): Promise<Student[]> {
+    return this.store.list();
+  }
+}
+
+class SupabaseGuardianContactRepository implements GuardianContactRepository {
+  constructor(private readonly store: SupabaseEntityStore<GuardianContact>) {}
+
+  upsert(contact: GuardianContact): Promise<void> {
+    return this.store.upsert(contact);
+  }
+
+  getById(id: string): Promise<GuardianContact | null> {
+    return this.store.getByColumn("id", id);
+  }
+
+  listByStudent(studentId: string): Promise<GuardianContact[]> {
+    return this.store.filterByColumn("student_id", studentId);
+  }
+
+  list(): Promise<GuardianContact[]> {
     return this.store.list();
   }
 }
@@ -670,6 +751,7 @@ class SupabaseAuditEventRepository implements AuditEventRepository {
 
 export class SupabaseAdapter implements StorageRepositories {
   readonly students: StudentRepository;
+  readonly guardianContacts: GuardianContactRepository;
   readonly rawIncidents: RawIncidentRepository;
   readonly approvedIncidents: ApprovedIncidentRepository;
   readonly parseRuns: ParseRunRepository;
@@ -685,6 +767,7 @@ export class SupabaseAdapter implements StorageRepositories {
     const definitions = createDefinitions();
 
     const studentStore = new SupabaseEntityStore(client, definitions.students);
+    const guardianContactStore = new SupabaseEntityStore(client, definitions.guardianContacts);
     const rawIncidentStore = new SupabaseEntityStore(client, definitions.rawIncidents);
     const approvedIncidentStore = new SupabaseEntityStore(client, definitions.approvedIncidents);
     const parseRunStore = new SupabaseEntityStore(client, definitions.parseRuns);
@@ -695,6 +778,7 @@ export class SupabaseAdapter implements StorageRepositories {
     const auditEventStore = new SupabaseEntityStore(client, definitions.auditEvents);
 
     this.students = new SupabaseStudentRepository(studentStore);
+    this.guardianContacts = new SupabaseGuardianContactRepository(guardianContactStore);
     this.rawIncidents = new SupabaseRawIncidentRepository(rawIncidentStore);
     this.approvedIncidents = new SupabaseApprovedIncidentRepository(approvedIncidentStore);
     this.parseRuns = new SupabaseParseRunRepository(parseRunStore);
@@ -706,6 +790,7 @@ export class SupabaseAdapter implements StorageRepositories {
 
     this.stores = [
       studentStore,
+      guardianContactStore,
       rawIncidentStore,
       approvedIncidentStore,
       parseRunStore,

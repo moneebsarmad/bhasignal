@@ -47,6 +47,17 @@ export interface StudentDetailSnapshot {
     grade: string;
     externalId: string | null;
   };
+  guardianContacts: Array<{
+    id: string;
+    guardianName: string | null;
+    relationship: string | null;
+    email: string | null;
+    phone: string | null;
+    isPrimary: boolean;
+    allowEmail: boolean;
+    sourceType: string;
+    isActive: boolean;
+  }>;
   incidents: StudentIncidentRow[];
   interventions: Array<{
     id: string;
@@ -61,6 +72,14 @@ export interface StudentDetailSnapshot {
     status: string;
     recipient: string;
     sentAt: string | null;
+    kind: string;
+    bandId: string | null;
+    draftSubject: string | null;
+    draftBody: string | null;
+    approvedBy: string | null;
+    approvedAt: string | null;
+    suppressedReason: string | null;
+    guardianContactId: string | null;
   }>;
   auditEvents: Array<{
     id: string;
@@ -73,7 +92,7 @@ export interface StudentDetailSnapshot {
 export const DEFAULT_STUDENT_SOURCE_TYPE: IngestionSourceType = "sycamore_api";
 
 export function normalizeStudentSourceType(value: string | undefined): IngestionSourceType {
-  return value === "manual_pdf" ? value : DEFAULT_STUDENT_SOURCE_TYPE;
+  return DEFAULT_STUDENT_SOURCE_TYPE;
 }
 
 function normalizeFilterValue(value: string | undefined): string {
@@ -161,15 +180,44 @@ function mapInterventions(interventions: Intervention[]): StudentDetailSnapshot[
 function mapNotifications(notifications: Notification[]): StudentDetailSnapshot["notifications"] {
   return notifications
     .sort((left, right) => {
-      const leftEpoch = Date.parse(left.sentAt ?? "1970-01-01T00:00:00.000Z");
-      const rightEpoch = Date.parse(right.sentAt ?? "1970-01-01T00:00:00.000Z");
+      const leftEpoch = Date.parse(left.sentAt ?? left.approvedAt ?? "1970-01-01T00:00:00.000Z");
+      const rightEpoch = Date.parse(right.sentAt ?? right.approvedAt ?? "1970-01-01T00:00:00.000Z");
       return rightEpoch - leftEpoch;
     })
     .map((notification) => ({
       id: notification.id,
       status: notification.status,
       recipient: notification.recipient,
-      sentAt: notification.sentAt
+      sentAt: notification.sentAt,
+      kind: notification.kind ?? "policy",
+      bandId: notification.bandId ?? null,
+      draftSubject: notification.draftSubject ?? null,
+      draftBody: notification.draftBody ?? null,
+      approvedBy: notification.approvedBy ?? null,
+      approvedAt: notification.approvedAt ?? null,
+      suppressedReason: notification.suppressedReason ?? null,
+      guardianContactId: notification.guardianContactId ?? null
+    }));
+}
+
+function mapGuardianContacts(contacts: Awaited<ReturnType<StorageRepositories["guardianContacts"]["listByStudent"]>>) {
+  return contacts
+    .sort((left, right) => {
+      if (left.isPrimary !== right.isPrimary) {
+        return left.isPrimary ? -1 : 1;
+      }
+      return (left.guardianName ?? "").localeCompare(right.guardianName ?? "");
+    })
+    .map((contact) => ({
+      id: contact.id,
+      guardianName: contact.guardianName ?? null,
+      relationship: contact.relationship ?? null,
+      email: contact.email ?? null,
+      phone: contact.phone ?? null,
+      isPrimary: contact.isPrimary,
+      allowEmail: contact.allowEmail,
+      sourceType: contact.sourceType,
+      isActive: contact.isActive
     }));
 }
 
@@ -289,7 +337,7 @@ export async function buildStudentDetailSnapshot(
     return null;
   }
 
-  const [disciplineEvents, interventions, notifications, auditEvents] = await Promise.all([
+  const [disciplineEvents, interventions, notifications, auditEvents, guardianContacts] = await Promise.all([
     listDisciplineEvents(storage, undefined, {
       sourceType,
       localStudentId: student.id,
@@ -297,7 +345,8 @@ export async function buildStudentDetailSnapshot(
     }),
     storage.interventions.listByStudent(student.id),
     storage.notifications.listByStudent(student.id),
-    storage.auditEvents.list()
+    storage.auditEvents.list(),
+    storage.guardianContacts.listByStudent(student.id)
   ]);
 
   const incidents = disciplineEvents
@@ -315,6 +364,7 @@ export async function buildStudentDetailSnapshot(
       grade: student.grade,
       externalId: student.externalId
     },
+    guardianContacts: mapGuardianContacts(guardianContacts),
     incidents,
     interventions: mapInterventions(interventions),
     notifications: mapNotifications(notifications),

@@ -1,6 +1,7 @@
 export type {
   ApprovedIncidentRepository,
   AuditEventRepository,
+  GuardianContactRepository,
   InterventionRepository,
   NotificationRepository,
   ParseRunRepository,

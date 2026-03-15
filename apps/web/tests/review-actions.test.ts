@@ -4,6 +4,7 @@ import test from "node:test";
 import type {
   ApprovedIncident,
   AuditEvent,
+  GuardianContact,
   Intervention,
   Notification,
   ParseRun,
@@ -21,6 +22,7 @@ export function createInMemoryStorage(seed: {
   rawIncidents: RawIncident[];
   reviewTasks: ReviewTask[];
   students?: Student[];
+  guardianContacts?: GuardianContact[];
   approvedIncidents?: ApprovedIncident[];
   policies?: Policy[];
   interventions?: Intervention[];
@@ -28,6 +30,7 @@ export function createInMemoryStorage(seed: {
   auditEvents?: AuditEvent[];
 }): StorageRepositories {
   const students = [...(seed.students ?? [])];
+  const guardianContacts: GuardianContact[] = [...(seed.guardianContacts ?? [])];
   const rawIncidents = [...seed.rawIncidents];
   const approvedIncidents: ApprovedIncident[] = [...(seed.approvedIncidents ?? [])];
   const parseRuns = [...seed.parseRuns];
@@ -52,6 +55,25 @@ export function createInMemoryStorage(seed: {
       },
       async list() {
         return [...students];
+      }
+    },
+    guardianContacts: {
+      async upsert(contact) {
+        const index = guardianContacts.findIndex((item) => item.id === contact.id);
+        if (index >= 0) {
+          guardianContacts[index] = contact;
+        } else {
+          guardianContacts.push(contact);
+        }
+      },
+      async getById(id) {
+        return guardianContacts.find((contact) => contact.id === id) ?? null;
+      },
+      async listByStudent(studentId) {
+        return guardianContacts.filter((contact) => contact.studentId === studentId);
+      },
+      async list() {
+        return [...guardianContacts];
       }
     },
     rawIncidents: {

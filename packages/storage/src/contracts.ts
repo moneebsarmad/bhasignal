@@ -1,6 +1,7 @@
 import type {
   ApprovedIncident,
   AuditEvent,
+  GuardianContact,
   Intervention,
   Notification,
   ParseRun,
@@ -15,6 +16,13 @@ export interface StudentRepository {
   upsert(student: Student): Promise<void>;
   getById(id: UUID): Promise<Student | null>;
   list(): Promise<Student[]>;
+}
+
+export interface GuardianContactRepository {
+  upsert(contact: GuardianContact): Promise<void>;
+  getById(id: UUID): Promise<GuardianContact | null>;
+  listByStudent(studentId: UUID): Promise<GuardianContact[]>;
+  list(): Promise<GuardianContact[]>;
 }
 
 export interface RawIncidentRepository {
@@ -74,6 +82,7 @@ export interface AuditEventRepository {
 
 export interface StorageRepositories {
   students: StudentRepository;
+  guardianContacts: GuardianContactRepository;
   rawIncidents: RawIncidentRepository;
   approvedIncidents: ApprovedIncidentRepository;
   parseRuns: ParseRunRepository;

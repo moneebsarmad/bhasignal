@@ -24,6 +24,7 @@ import {
   Select,
   SoftPanel,
   StatusBadge,
+  Textarea,
   tableCellClassName,
   tableClassName,
   tableHeadCellClassName,
@@ -49,6 +50,17 @@ interface StudentDetail {
     grade: string;
     externalId: string | null;
   };
+  guardianContacts: Array<{
+    id: string;
+    guardianName: string | null;
+    relationship: string | null;
+    email: string | null;
+    phone: string | null;
+    isPrimary: boolean;
+    allowEmail: boolean;
+    sourceType: string;
+    isActive: boolean;
+  }>;
   incidents: Array<{
     id: string;
     occurredAt: string;
@@ -76,6 +88,14 @@ interface StudentDetail {
     status: string;
     recipient: string;
     sentAt: string | null;
+    kind: string;
+    bandId: string | null;
+    draftSubject: string | null;
+    draftBody: string | null;
+    approvedBy: string | null;
+    approvedAt: string | null;
+    suppressedReason: string | null;
+    guardianContactId: string | null;
   }>;
   auditEvents: Array<{
     id: string;
@@ -128,10 +148,13 @@ function statusTone(status: string): StatusTone {
   if (status.includes("completed") || status.includes("sent")) {
     return "success";
   }
+  if (status.includes("approved")) {
+    return "info";
+  }
   if (status.includes("in_progress")) {
     return "info";
   }
-  if (status.includes("queued") || status.includes("pending")) {
+  if (status.includes("queued") || status.includes("pending") || status.includes("draft")) {
     return "warning";
   }
   if (status.includes("failed") || status.includes("overdue")) {
@@ -358,10 +381,14 @@ function RiskLane({
 
 export function StudentsClient({
   initialFilters,
-  initialMode
+  initialMode,
+  initialSelectedStudentId,
+  initialDetailTab
 }: {
   initialFilters?: Partial<StudentFilterState>;
   initialMode?: PageMode;
+  initialSelectedStudentId?: string;
+  initialDetailTab?: DetailTab;
 }) {
   const resolvedInitialFilters: StudentFilterState = {
     search: initialFilters?.search?.trim() ?? "",
@@ -377,12 +404,14 @@ export function StudentsClient({
   const [appliedFilters, setAppliedFilters] = useState<StudentFilterState>(resolvedInitialFilters);
   const [pageMode, setPageMode] = useState<PageMode>(resolvedInitialMode);
   const [students, setStudents] = useState<StudentRow[]>([]);
-  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(initialSelectedStudentId ?? null);
   const [detail, setDetail] = useState<StudentDetail | null>(null);
-  const [detailTab, setDetailTab] = useState<DetailTab>("overview");
+  const [detailTab, setDetailTab] = useState<DetailTab>(initialDetailTab ?? "overview");
   const [isLoading, setIsLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
   const [isUpdatingIntervention, setIsUpdatingIntervention] = useState<string | null>(null);
+  const [isUpdatingNotification, setIsUpdatingNotification] = useState<string | null>(null);
+  const [draftEdits, setDraftEdits] = useState<Record<string, { subject: string; body: string }>>({});
   const [error, setError] = useState<string | null>(null);
 
   const loadStudents = useCallback(async (nextFilters: typeof appliedFilters) => {
@@ -436,10 +465,20 @@ export function StudentsClient({
       current.grade === resolvedInitialFilters.grade &&
       current.sourceType === resolvedInitialFilters.sourceType
         ? current
-        : resolvedInitialFilters
+        : {
+            search: resolvedInitialFilters.search,
+            grade: resolvedInitialFilters.grade,
+            sourceType: resolvedInitialFilters.sourceType
+          }
     );
     setPageMode((current) => (current === resolvedInitialMode ? current : resolvedInitialMode));
+    setSelectedStudentId((current) =>
+      current === (initialSelectedStudentId ?? null) ? current : (initialSelectedStudentId ?? null)
+    );
+    setDetailTab((current) => (current === (initialDetailTab ?? "overview") ? current : (initialDetailTab ?? "overview")));
   }, [
+    initialDetailTab,
+    initialSelectedStudentId,
     resolvedInitialFilters.grade,
     resolvedInitialFilters.search,
     resolvedInitialFilters.sourceType,
@@ -473,6 +512,40 @@ export function StudentsClient({
     void loadDetail();
   }, [appliedFilters.sourceType, pageMode, selectedStudentId]);
 
+  useEffect(() => {
+    if (!detail) {
+      setDraftEdits({});
+      return;
+    }
+    setDraftEdits((current) => {
+      const next = { ...current };
+      for (const notification of detail.notifications) {
+        if (notification.kind !== "parent_outreach") {
+          continue;
+        }
+        next[notification.id] = {
+          subject: notification.draftSubject ?? "",
+          body: notification.draftBody ?? ""
+        };
+      }
+      return next;
+    });
+  }, [detail]);
+
+  async function refreshDetail() {
+    if (!selectedStudentId) {
+      return;
+    }
+    const params = new URLSearchParams({ sourceType: appliedFilters.sourceType });
+    const detailResponse = await fetch(`/api/students/${encodeURIComponent(selectedStudentId)}?${params.toString()}`, {
+      cache: "no-store"
+    });
+    if (detailResponse.ok) {
+      const detailBody = (await detailResponse.json()) as StudentDetail;
+      setDetail(detailBody);
+    }
+  }
+
   async function updateInterventionStatus(interventionId: string, status: string) {
     setIsUpdatingIntervention(interventionId);
     const response = await fetch(`/api/interventions/${encodeURIComponent(interventionId)}/status`, {
@@ -487,18 +560,72 @@ export function StudentsClient({
       return;
     }
 
-    const params = new URLSearchParams({ sourceType: appliedFilters.sourceType });
-    if (selectedStudentId) {
-      const detailResponse = await fetch(`/api/students/${encodeURIComponent(selectedStudentId)}?${params.toString()}`, {
-        cache: "no-store"
-      });
-      if (detailResponse.ok) {
-        const detailBody = (await detailResponse.json()) as StudentDetail;
-        setDetail(detailBody);
-      }
-    }
+    await refreshDetail();
     await loadStudents(appliedFilters);
     setIsUpdatingIntervention(null);
+  }
+
+  async function saveParentOutreachDraft(notificationId: string) {
+    const draft = draftEdits[notificationId];
+    if (!draft) {
+      return;
+    }
+    setIsUpdatingNotification(notificationId);
+    const response = await fetch("/api/notifications/parent-outreach/update-draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        notificationId,
+        subject: draft.subject,
+        body: draft.body
+      })
+    });
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) {
+      setError(body?.error || "Failed to update parent outreach draft.");
+      setIsUpdatingNotification(null);
+      return;
+    }
+    await refreshDetail();
+    setIsUpdatingNotification(null);
+  }
+
+  async function approveParentOutreachDraft(notificationId: string) {
+    setIsUpdatingNotification(notificationId);
+    const response = await fetch("/api/notifications/parent-outreach/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notificationIds: [notificationId] })
+    });
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) {
+      setError(body?.error || "Failed to approve parent outreach draft.");
+      setIsUpdatingNotification(null);
+      return;
+    }
+    await refreshDetail();
+    await loadStudents(appliedFilters);
+    setIsUpdatingNotification(null);
+  }
+
+  async function suppressParentOutreachDraft(notificationId: string) {
+    setIsUpdatingNotification(notificationId);
+    const response = await fetch("/api/notifications/parent-outreach/suppress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        notificationIds: [notificationId],
+        reason: "Suppressed during case-file review."
+      })
+    });
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (!response.ok) {
+      setError(body?.error || "Failed to suppress parent outreach draft.");
+      setIsUpdatingNotification(null);
+      return;
+    }
+    await refreshDetail();
+    setIsUpdatingNotification(null);
   }
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
@@ -605,6 +732,15 @@ export function StudentsClient({
     const completedInterventions = detail.interventions.filter((intervention) => intervention.status === "completed").length;
     const queuedNotifications = detail.notifications.filter((notification) => notification.status === "queued").length;
     const sentNotifications = detail.notifications.filter((notification) => notification.status === "sent").length;
+    const parentOutreachDrafts = detail.notifications.filter(
+      (notification) => notification.kind === "parent_outreach" && notification.status === "draft"
+    ).length;
+    const approvedParentOutreach = detail.notifications.filter(
+      (notification) => notification.kind === "parent_outreach" && notification.status === "approved"
+    ).length;
+    const emailEnabledGuardians = detail.guardianContacts.filter(
+      (contact) => contact.isActive && contact.allowEmail && contact.email
+    ).length;
     const latestIncident = detail.incidents[0] ?? null;
     const latestAudit = detail.auditEvents[0] ?? null;
     return {
@@ -612,10 +748,21 @@ export function StudentsClient({
       completedInterventions,
       queuedNotifications,
       sentNotifications,
+      parentOutreachDrafts,
+      approvedParentOutreach,
+      emailEnabledGuardians,
       latestIncident,
       latestAudit
     };
   }, [detail]);
+  const parentOutreachNotifications = useMemo(
+    () => detail?.notifications.filter((notification) => notification.kind === "parent_outreach") ?? [],
+    [detail]
+  );
+  const otherNotifications = useMemo(
+    () => detail?.notifications.filter((notification) => notification.kind !== "parent_outreach") ?? [],
+    [detail]
+  );
 
   const gradeOptions = useMemo(() => {
     const grades = [...new Set(students.map((student) => student.grade))].sort((left, right) =>
@@ -707,15 +854,6 @@ export function StudentsClient({
                   Grade {grade}
                 </option>
               ))}
-            </Select>
-          </Field>
-          <Field label="Dataset">
-            <Select
-              value={draftSourceType}
-              onChange={(event) => setDraftSourceType(event.currentTarget.value as "manual_pdf" | "sycamore_api")}
-            >
-              <option value="sycamore_api">Sycamore primary</option>
-              <option value="manual_pdf">PDF exception mode</option>
             </Select>
           </Field>
           <div className="flex items-end">
@@ -913,10 +1051,10 @@ export function StudentsClient({
                 <SoftPanel className="space-y-2">
                   <div className="flex items-center gap-2 text-[var(--color-primary)]">
                     <BellDot className="h-4 w-4" />
-                    <p className="text-sm font-semibold text-[var(--color-ink)]">Queued notifications</p>
+                    <p className="text-sm font-semibold text-[var(--color-ink)]">Parent outreach</p>
                   </div>
-                  <p className="font-display text-3xl text-[var(--color-ink)]">{caseFileSummary?.queuedNotifications ?? 0}</p>
-                  <p className="text-sm text-[var(--color-muted)]">Messages still waiting to be sent.</p>
+                  <p className="font-display text-3xl text-[var(--color-ink)]">{caseFileSummary?.parentOutreachDrafts ?? 0}</p>
+                  <p className="text-sm text-[var(--color-muted)]">Draft parent emails awaiting case review.</p>
                 </SoftPanel>
               </section>
 
@@ -1005,10 +1143,11 @@ export function StudentsClient({
                     <SoftPanel className="space-y-3">
                       <div className="flex items-center gap-2 text-[var(--color-primary)]">
                         <Sparkles className="h-4 w-4" />
-                        <p className="text-sm font-semibold text-[var(--color-ink)]">Notification posture</p>
+                        <p className="text-sm font-semibold text-[var(--color-ink)]">Parent outreach posture</p>
                       </div>
                       <p className="text-sm text-[var(--color-muted)]">
-                        {caseFileSummary?.sentNotifications ?? 0} sent • {caseFileSummary?.queuedNotifications ?? 0} queued
+                        {caseFileSummary?.parentOutreachDrafts ?? 0} draft • {caseFileSummary?.approvedParentOutreach ?? 0} approved •{" "}
+                        {caseFileSummary?.emailEnabledGuardians ?? 0} guardian emails
                       </p>
                       <Button type="button" size="sm" variant="secondary" onClick={() => setDetailTab("notifications")}>
                         Open notifications
@@ -1128,19 +1267,185 @@ export function StudentsClient({
                       description="Queued and sent notifications for this student will appear here once actions are dispatched."
                     />
                   ) : (
-                    detail.notifications.slice(0, 10).map((notification) => (
-                      <SoftPanel key={notification.id} className="space-y-3">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                          <div>
-                            <p className="font-semibold text-[var(--color-ink)]">{notification.recipient}</p>
-                            <p className="mt-1 text-sm text-[var(--color-muted)]">
-                              {notification.sentAt ? new Date(notification.sentAt).toLocaleString() : "Not sent yet"}
-                            </p>
-                          </div>
-                          <StatusBadge tone={statusTone(notification.status)}>{notification.status}</StatusBadge>
+                    <>
+                      <SoftPanel className="space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold text-[var(--color-ink)]">Guardian contacts</p>
+                          <StatusBadge tone={detail.guardianContacts.some((contact) => contact.email && contact.isActive) ? "success" : "warning"}>
+                            {detail.guardianContacts.filter((contact) => contact.email && contact.isActive).length} email-ready
+                          </StatusBadge>
                         </div>
+                        {detail.guardianContacts.length === 0 ? (
+                          <p className="text-sm text-[var(--color-muted)]">
+                            No guardian contacts are attached to this student yet.
+                          </p>
+                        ) : (
+                          <div className="grid gap-3">
+                            {detail.guardianContacts.map((contact) => (
+                              <div
+                                key={contact.id}
+                                className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/80 px-4 py-3"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <p className="font-semibold text-[var(--color-ink)]">
+                                    {contact.guardianName || contact.relationship || "Guardian"}
+                                  </p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {contact.relationship ? <StatusBadge tone="neutral">{contact.relationship}</StatusBadge> : null}
+                                    {contact.isPrimary ? <StatusBadge tone="info">Primary</StatusBadge> : null}
+                                    <StatusBadge tone={contact.email && contact.allowEmail && contact.isActive ? "success" : "warning"}>
+                                      {contact.email && contact.allowEmail && contact.isActive ? "Email enabled" : "Needs review"}
+                                    </StatusBadge>
+                                  </div>
+                                </div>
+                                <p className="mt-2 text-sm text-[var(--color-muted)]">
+                                  {contact.email || "No email on file"}
+                                  {contact.phone ? ` • ${contact.phone}` : ""}
+                                  {contact.sourceType ? ` • Source ${contact.sourceType}` : ""}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </SoftPanel>
-                    ))
+
+                      <SoftPanel className="space-y-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold text-[var(--color-ink)]">Parent outreach</p>
+                          <StatusBadge tone={parentOutreachNotifications.length > 0 ? "warning" : "neutral"}>
+                            {parentOutreachNotifications.length} rows
+                          </StatusBadge>
+                        </div>
+                        {parentOutreachNotifications.length === 0 ? (
+                          <p className="text-sm text-[var(--color-muted)]">
+                            No parent outreach drafts or sends have been created for this student yet.
+                          </p>
+                        ) : (
+                          parentOutreachNotifications.map((notification) => (
+                            <div
+                              key={notification.id}
+                              className="space-y-4 rounded-[1.4rem] border border-[var(--color-line)] bg-white/80 px-5 py-4"
+                            >
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <p className="font-semibold text-[var(--color-ink)]">{notification.recipient}</p>
+                                  <p className="mt-1 text-sm text-[var(--color-muted)]">
+                                    {notification.sentAt
+                                      ? `Sent ${new Date(notification.sentAt).toLocaleString()}`
+                                      : notification.approvedAt
+                                        ? `Approved ${new Date(notification.approvedAt).toLocaleString()}`
+                                        : "Awaiting approval"}
+                                  </p>
+                                </div>
+                                <StatusBadge tone={statusTone(notification.status)}>{notification.status}</StatusBadge>
+                              </div>
+
+                              {notification.status === "suppressed" && notification.suppressedReason ? (
+                                <p className="text-sm leading-7 text-[var(--color-muted)]">
+                                  Suppressed: {notification.suppressedReason}
+                                </p>
+                              ) : null}
+
+                              {notification.status === "sent" || notification.status === "suppressed" ? (
+                                <>
+                                  <p className="text-sm font-semibold text-[var(--color-ink)]">
+                                    {draftEdits[notification.id]?.subject || notification.draftSubject || "No subject"}
+                                  </p>
+                                  <p className="text-sm leading-7 text-[var(--color-muted)] whitespace-pre-wrap">
+                                    {draftEdits[notification.id]?.body || notification.draftBody || "No draft body"}
+                                  </p>
+                                </>
+                              ) : (
+                                <>
+                                  <Field label="Draft subject">
+                                    <Input
+                                      value={draftEdits[notification.id]?.subject ?? notification.draftSubject ?? ""}
+                                      onChange={(event) =>
+                                        setDraftEdits((current) => ({
+                                          ...current,
+                                          [notification.id]: {
+                                            subject: event.currentTarget.value,
+                                            body: current[notification.id]?.body ?? notification.draftBody ?? ""
+                                          }
+                                        }))
+                                      }
+                                    />
+                                  </Field>
+                                  <Field label="Draft body">
+                                    <Textarea
+                                      rows={6}
+                                      value={draftEdits[notification.id]?.body ?? notification.draftBody ?? ""}
+                                      onChange={(event) =>
+                                        setDraftEdits((current) => ({
+                                          ...current,
+                                          [notification.id]: {
+                                            subject: current[notification.id]?.subject ?? notification.draftSubject ?? "",
+                                            body: event.currentTarget.value
+                                          }
+                                        }))
+                                      }
+                                    />
+                                  </Field>
+                                  <div className="flex flex-wrap gap-3">
+                                    <Button
+                                      type="button"
+                                      variant="secondary"
+                                      disabled={isUpdatingNotification === notification.id}
+                                      onClick={() => void saveParentOutreachDraft(notification.id)}
+                                    >
+                                      Save draft
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="primary"
+                                      disabled={isUpdatingNotification === notification.id}
+                                      onClick={() => void approveParentOutreachDraft(notification.id)}
+                                    >
+                                      Approve draft
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      disabled={isUpdatingNotification === notification.id}
+                                      onClick={() => void suppressParentOutreachDraft(notification.id)}
+                                    >
+                                      Suppress
+                                    </Button>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </SoftPanel>
+
+                      {otherNotifications.length > 0 ? (
+                        <SoftPanel className="space-y-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-semibold text-[var(--color-ink)]">Other notifications</p>
+                            <StatusBadge tone="neutral">{otherNotifications.length} rows</StatusBadge>
+                          </div>
+                          <div className="grid gap-3">
+                            {otherNotifications.slice(0, 10).map((notification) => (
+                              <div
+                                key={notification.id}
+                                className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/80 px-4 py-3"
+                              >
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                  <div>
+                                    <p className="font-semibold text-[var(--color-ink)]">{notification.recipient}</p>
+                                    <p className="mt-1 text-sm text-[var(--color-muted)]">
+                                      {notification.sentAt ? new Date(notification.sentAt).toLocaleString() : "Not sent yet"}
+                                    </p>
+                                  </div>
+                                  <StatusBadge tone={statusTone(notification.status)}>{notification.status}</StatusBadge>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </SoftPanel>
+                      ) : null}
+                    </>
                   )}
                 </div>
               ) : null}

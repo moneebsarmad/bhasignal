@@ -28,11 +28,28 @@ export const interventionStatuses = [
 export type InterventionStatus = (typeof interventionStatuses)[number];
 
 export const notificationStatuses = [
+  "draft",
+  "approved",
   "queued",
   "sent",
-  "failed"
+  "failed",
+  "suppressed"
 ] as const;
 export type NotificationStatus = (typeof notificationStatuses)[number];
+
+export const notificationKinds = [
+  "policy",
+  "parent_outreach",
+  "manual_override"
+] as const;
+export type NotificationKind = (typeof notificationKinds)[number];
+
+export const guardianContactSourceTypes = [
+  "manual",
+  "csv_import",
+  "sycamore_roster"
+] as const;
+export type GuardianContactSourceType = (typeof guardianContactSourceTypes)[number];
 
 export const ingestionSourceTypes = ["manual_pdf", "sycamore_api"] as const;
 export type IngestionSourceType = (typeof ingestionSourceTypes)[number];
@@ -52,6 +69,23 @@ export const studentSchema = z.object({
   updatedAt: isoDateSchema
 });
 export type Student = z.infer<typeof studentSchema>;
+
+export const guardianContactSchema = z.object({
+  id: uuidSchema,
+  studentId: uuidSchema,
+  guardianName: z.string().nullable().optional(),
+  relationship: z.string().nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  phone: z.string().nullable().optional(),
+  isPrimary: z.boolean(),
+  allowEmail: z.boolean(),
+  sourceType: z.enum(guardianContactSourceTypes),
+  sourceRecordId: z.string().nullable().optional(),
+  lastSyncedAt: z.string().nullable().optional(),
+  isActive: z.boolean(),
+  notes: z.string()
+});
+export type GuardianContact = z.infer<typeof guardianContactSchema>;
 
 export const rawIncidentSchema = z.object({
   id: uuidSchema,
@@ -172,7 +206,18 @@ export const notificationSchema = z.object({
   status: z.enum(notificationStatuses),
   providerId: z.string(),
   sentAt: z.string().nullable(),
-  error: z.string()
+  error: z.string(),
+  kind: z.enum(notificationKinds).optional(),
+  bandId: z.string().nullable().optional(),
+  templateKey: z.string().nullable().optional(),
+  draftSubject: z.string().nullable().optional(),
+  draftBody: z.string().nullable().optional(),
+  approvedBy: z.string().nullable().optional(),
+  approvedAt: z.string().nullable().optional(),
+  suppressedAt: z.string().nullable().optional(),
+  suppressedReason: z.string().nullable().optional(),
+  guardianContactId: z.string().nullable().optional(),
+  metadataJson: z.string().optional()
 });
 export type Notification = z.infer<typeof notificationSchema>;
 
@@ -189,6 +234,7 @@ export type AuditEvent = z.infer<typeof auditEventSchema>;
 
 export const domainSchemas = {
   student: studentSchema,
+  guardianContact: guardianContactSchema,
   rawIncident: rawIncidentSchema,
   approvedIncident: approvedIncidentSchema,
   parseRun: parseRunSchema,
@@ -201,6 +247,10 @@ export const domainSchemas = {
 
 export function parseStudent(input: unknown): Student {
   return studentSchema.parse(input);
+}
+
+export function parseGuardianContact(input: unknown): GuardianContact {
+  return guardianContactSchema.parse(input);
 }
 
 export function parseApprovedIncident(input: unknown): ApprovedIncident {

@@ -1,6 +1,7 @@
 import type {
   ApprovedIncident,
   AuditEvent,
+  GuardianContact,
   Intervention,
   Notification,
   ParseRun,
@@ -14,6 +15,7 @@ import { domainSchemas } from "@syc/domain";
 import type {
   ApprovedIncidentRepository,
   AuditEventRepository,
+  GuardianContactRepository,
   InterventionRepository,
   NotificationRepository,
   ParseRunRepository,
@@ -312,6 +314,56 @@ function createDefinitions() {
       active: boolToSheet(value.active),
       created_at: value.createdAt,
       updated_at: value.updatedAt
+    })
+  };
+
+  const guardianContacts: TabDefinition<GuardianContact> = {
+    tab: "guardian_contacts",
+    headers: [
+      "guardian_contact_id",
+      "student_id",
+      "guardian_name",
+      "relationship",
+      "email",
+      "phone",
+      "is_primary",
+      "allow_email",
+      "source_type",
+      "source_record_id",
+      "last_synced_at",
+      "is_active",
+      "notes"
+    ],
+    parseRow: (row) =>
+      domainSchemas.guardianContact.parse({
+        id: cell(row, "guardian_contact_id"),
+        studentId: cell(row, "student_id"),
+        guardianName: sheetToNullable(cell(row, "guardian_name")),
+        relationship: sheetToNullable(cell(row, "relationship")),
+        email: sheetToNullable(cell(row, "email")),
+        phone: sheetToNullable(cell(row, "phone")),
+        isPrimary: sheetToBool(cell(row, "is_primary")),
+        allowEmail: sheetToBool(cell(row, "allow_email")),
+        sourceType: cell(row, "source_type") || "manual",
+        sourceRecordId: sheetToNullable(cell(row, "source_record_id")),
+        lastSyncedAt: sheetToNullable(cell(row, "last_synced_at")),
+        isActive: sheetToBool(cell(row, "is_active")),
+        notes: cell(row, "notes")
+      }),
+    serialize: (value) => ({
+      guardian_contact_id: value.id,
+      student_id: value.studentId,
+      guardian_name: nullableToSheet(value.guardianName ?? null),
+      relationship: nullableToSheet(value.relationship ?? null),
+      email: nullableToSheet(value.email ?? null),
+      phone: nullableToSheet(value.phone ?? null),
+      is_primary: boolToSheet(value.isPrimary),
+      allow_email: boolToSheet(value.allowEmail),
+      source_type: value.sourceType,
+      source_record_id: nullableToSheet(value.sourceRecordId ?? null),
+      last_synced_at: nullableToSheet(value.lastSyncedAt ?? null),
+      is_active: boolToSheet(value.isActive),
+      notes: value.notes
     })
   };
 
@@ -647,7 +699,18 @@ function createDefinitions() {
       "status",
       "provider_id",
       "sent_at",
-      "error"
+      "error",
+      "kind",
+      "band_id",
+      "template_key",
+      "draft_subject",
+      "draft_body",
+      "approved_by",
+      "approved_at",
+      "suppressed_at",
+      "suppressed_reason",
+      "guardian_contact_id",
+      "metadata_json"
     ],
     parseRow: (row) =>
       domainSchemas.notification.parse({
@@ -659,7 +722,18 @@ function createDefinitions() {
         status: cell(row, "status"),
         providerId: cell(row, "provider_id"),
         sentAt: sheetToNullable(cell(row, "sent_at")),
-        error: cell(row, "error")
+        error: cell(row, "error"),
+        kind: sheetToNullable(cell(row, "kind")) ?? undefined,
+        bandId: sheetToNullable(cell(row, "band_id")),
+        templateKey: sheetToNullable(cell(row, "template_key")),
+        draftSubject: sheetToNullable(cell(row, "draft_subject")),
+        draftBody: sheetToNullable(cell(row, "draft_body")),
+        approvedBy: sheetToNullable(cell(row, "approved_by")),
+        approvedAt: sheetToNullable(cell(row, "approved_at")),
+        suppressedAt: sheetToNullable(cell(row, "suppressed_at")),
+        suppressedReason: sheetToNullable(cell(row, "suppressed_reason")),
+        guardianContactId: sheetToNullable(cell(row, "guardian_contact_id")),
+        metadataJson: cell(row, "metadata_json") || "{}"
       }),
     serialize: (value) => ({
       notification_id: value.id,
@@ -670,7 +744,18 @@ function createDefinitions() {
       status: value.status,
       provider_id: value.providerId,
       sent_at: nullableToSheet(value.sentAt),
-      error: value.error
+      error: value.error,
+      kind: value.kind ?? "policy",
+      band_id: nullableToSheet(value.bandId ?? null),
+      template_key: nullableToSheet(value.templateKey ?? null),
+      draft_subject: nullableToSheet(value.draftSubject ?? null),
+      draft_body: nullableToSheet(value.draftBody ?? null),
+      approved_by: nullableToSheet(value.approvedBy ?? null),
+      approved_at: nullableToSheet(value.approvedAt ?? null),
+      suppressed_at: nullableToSheet(value.suppressedAt ?? null),
+      suppressed_reason: nullableToSheet(value.suppressedReason ?? null),
+      guardian_contact_id: nullableToSheet(value.guardianContactId ?? null),
+      metadata_json: value.metadataJson ?? "{}"
     })
   };
 
@@ -708,6 +793,7 @@ function createDefinitions() {
 
   return {
     students,
+    guardianContacts,
     rawIncidents,
     approvedIncidents,
     parseRuns,
@@ -731,6 +817,27 @@ class SheetsStudentRepository implements StudentRepository {
   }
 
   async list(): Promise<Student[]> {
+    const rows = await this.store.list();
+    return rows.map((row) => row.value);
+  }
+}
+
+class SheetsGuardianContactRepository implements GuardianContactRepository {
+  constructor(private readonly store: SheetsEntityStore<GuardianContact>) {}
+
+  async upsert(contact: GuardianContact): Promise<void> {
+    await this.store.upsertByColumn(contact, "guardian_contact_id", contact.id);
+  }
+
+  async getById(id: string): Promise<GuardianContact | null> {
+    return this.store.getByColumn("guardian_contact_id", id);
+  }
+
+  async listByStudent(studentId: string): Promise<GuardianContact[]> {
+    return this.store.filterByColumn("student_id", studentId);
+  }
+
+  async list(): Promise<GuardianContact[]> {
     const rows = await this.store.list();
     return rows.map((row) => row.value);
   }
@@ -941,6 +1048,7 @@ class SheetsAuditEventRepository implements AuditEventRepository {
 
 export class SheetsAdapter implements StorageRepositories {
   readonly students: StudentRepository;
+  readonly guardianContacts: GuardianContactRepository;
   readonly rawIncidents: RawIncidentRepository;
   readonly approvedIncidents: ApprovedIncidentRepository;
   readonly parseRuns: ParseRunRepository;
@@ -956,6 +1064,7 @@ export class SheetsAdapter implements StorageRepositories {
     const definitions = createDefinitions();
 
     const studentStore = new SheetsEntityStore(client, definitions.students);
+    const guardianContactStore = new SheetsEntityStore(client, definitions.guardianContacts);
     const rawIncidentStore = new SheetsEntityStore(client, definitions.rawIncidents);
     const approvedIncidentStore = new SheetsEntityStore(client, definitions.approvedIncidents);
     const parseRunStore = new SheetsEntityStore(client, definitions.parseRuns);
@@ -966,6 +1075,7 @@ export class SheetsAdapter implements StorageRepositories {
     const auditEventStore = new SheetsEntityStore(client, definitions.auditEvents);
 
     this.students = new SheetsStudentRepository(studentStore);
+    this.guardianContacts = new SheetsGuardianContactRepository(guardianContactStore);
     this.rawIncidents = new SheetsRawIncidentRepository(rawIncidentStore);
     this.approvedIncidents = new SheetsApprovedIncidentRepository(approvedIncidentStore);
     this.parseRuns = new SheetsParseRunRepository(parseRunStore);
@@ -977,6 +1087,7 @@ export class SheetsAdapter implements StorageRepositories {
 
     this.stores = [
       studentStore,
+      guardianContactStore,
       rawIncidentStore,
       approvedIncidentStore,
       parseRunStore,

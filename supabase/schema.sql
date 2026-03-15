@@ -10,6 +10,26 @@ create table if not exists public.students (
   updated_at text not null
 );
 
+create table if not exists public.guardian_contacts (
+  id text primary key,
+  student_id text not null references public.students (id),
+  guardian_name text null,
+  relationship text null,
+  email text null,
+  phone text null,
+  is_primary boolean not null default false,
+  allow_email boolean not null default true,
+  source_type text not null default 'manual',
+  source_record_id text null,
+  last_synced_at text null,
+  is_active boolean not null default true,
+  notes text not null default ''
+);
+
+create index if not exists guardian_contacts_student_idx on public.guardian_contacts (student_id);
+create index if not exists guardian_contacts_email_idx on public.guardian_contacts (email);
+create index if not exists guardian_contacts_active_idx on public.guardian_contacts (is_active, allow_email);
+
 create table if not exists public.incidents_raw (
   id text primary key,
   parse_run_id text not null,
@@ -186,8 +206,22 @@ create table if not exists public.notifications (
   error text not null default ''
 );
 
+alter table public.notifications add column if not exists kind text null default 'policy';
+alter table public.notifications add column if not exists band_id text null;
+alter table public.notifications add column if not exists template_key text null;
+alter table public.notifications add column if not exists draft_subject text null;
+alter table public.notifications add column if not exists draft_body text null;
+alter table public.notifications add column if not exists approved_by text null;
+alter table public.notifications add column if not exists approved_at text null;
+alter table public.notifications add column if not exists suppressed_at text null;
+alter table public.notifications add column if not exists suppressed_reason text null;
+alter table public.notifications add column if not exists guardian_contact_id text null references public.guardian_contacts (id);
+alter table public.notifications add column if not exists metadata_json text not null default '{}';
+
 create index if not exists notifications_student_idx on public.notifications (student_id);
 create index if not exists notifications_status_idx on public.notifications (status);
+create index if not exists notifications_kind_idx on public.notifications (kind);
+create index if not exists notifications_guardian_contact_idx on public.notifications (guardian_contact_id);
 
 create table if not exists public.audit_events (
   id text primary key,

@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import type {
   ApprovedIncident,
   AuditEvent,
+  GuardianContact,
   Intervention,
   Notification,
   ParseRun,
@@ -18,6 +19,7 @@ export type AppStorageAdapter = StorageRepositories & { ensureSchema: () => Prom
 
 interface LocalStoreState {
   students: Student[];
+  guardianContacts: GuardianContact[];
   rawIncidents: RawIncident[];
   approvedIncidents: ApprovedIncident[];
   parseRuns: ParseRun[];
@@ -30,6 +32,7 @@ interface LocalStoreState {
 
 const emptyStoreState = (): LocalStoreState => ({
   students: [],
+  guardianContacts: [],
   rawIncidents: [],
   approvedIncidents: [],
   parseRuns: [],
@@ -52,6 +55,9 @@ function normalizeStore(raw: unknown): LocalStoreState {
   const parsed = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   return {
     students: Array.isArray(parsed.students) ? (parsed.students as Student[]) : [],
+    guardianContacts: Array.isArray(parsed.guardianContacts)
+      ? (parsed.guardianContacts as GuardianContact[])
+      : [],
     rawIncidents: Array.isArray(parsed.rawIncidents)
       ? (parsed.rawIncidents as RawIncident[]).map(normalizeRawIncident)
       : [],
@@ -156,6 +162,24 @@ export class LocalStorageAdapter implements AppStorageAdapter {
     getById: async (id: string) =>
       this.fromState((state) => state.students.find((item) => item.id === id) ?? null),
     list: async () => this.fromState((state) => [...state.students])
+  };
+
+  readonly guardianContacts = {
+    upsert: async (contact: GuardianContact) => {
+      await this.withState((state) => {
+        const index = state.guardianContacts.findIndex((item) => item.id === contact.id);
+        if (index >= 0) {
+          state.guardianContacts[index] = contact;
+        } else {
+          state.guardianContacts.push(contact);
+        }
+      });
+    },
+    getById: async (id: string) =>
+      this.fromState((state) => state.guardianContacts.find((item) => item.id === id) ?? null),
+    listByStudent: async (studentId: string) =>
+      this.fromState((state) => state.guardianContacts.filter((item) => item.studentId === studentId)),
+    list: async () => this.fromState((state) => [...state.guardianContacts])
   };
 
   readonly rawIncidents = {
