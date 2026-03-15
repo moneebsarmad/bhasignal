@@ -234,6 +234,41 @@ function sycamoreStatusSummary(sycamore: DashboardPayload["sycamore"]): {
   };
 }
 
+function handbookBandToneStyles(tone: "neutral" | "info" | "success" | "warning" | "danger") {
+  switch (tone) {
+    case "info":
+      return {
+        dot: "bg-sky-500",
+        card: "border-sky-200/80 bg-[linear-gradient(135deg,rgba(14,165,233,0.08),rgba(255,255,255,0.96)_46%,rgba(14,165,233,0.03))]",
+        chip: "bg-sky-100 text-sky-800"
+      };
+    case "success":
+      return {
+        dot: "bg-emerald-500",
+        card: "border-emerald-200/80 bg-[linear-gradient(135deg,rgba(16,185,129,0.08),rgba(255,255,255,0.96)_46%,rgba(16,185,129,0.03))]",
+        chip: "bg-emerald-100 text-emerald-800"
+      };
+    case "warning":
+      return {
+        dot: "bg-amber-500",
+        card: "border-amber-200/80 bg-[linear-gradient(135deg,rgba(245,158,11,0.10),rgba(255,255,255,0.96)_46%,rgba(245,158,11,0.04))]",
+        chip: "bg-amber-100 text-amber-800"
+      };
+    case "danger":
+      return {
+        dot: "bg-rose-500",
+        card: "border-rose-200/80 bg-[linear-gradient(135deg,rgba(244,63,94,0.10),rgba(255,255,255,0.96)_46%,rgba(244,63,94,0.04))]",
+        chip: "bg-rose-100 text-rose-800"
+      };
+    default:
+      return {
+        dot: "bg-slate-400",
+        card: "border-slate-200/80 bg-[linear-gradient(135deg,rgba(148,163,184,0.08),rgba(255,255,255,0.96)_46%,rgba(148,163,184,0.03))]",
+        chip: "bg-slate-100 text-slate-700"
+      };
+  }
+}
+
 function statusRows(record: Record<string, number>) {
   return Object.entries(record)
     .map(([key, count]) => ({
@@ -349,6 +384,10 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
   }
 
   const sycamoreStatus = useMemo(() => (data ? sycamoreStatusSummary(data.sycamore) : null), [data]);
+  const activeEscalationBands = useMemo(
+    () => data?.bandCounts.filter((band) => band.count > 0).length ?? 0,
+    [data]
+  );
   const interventionRows = useMemo(() => statusRows(data?.interventionCounts ?? {}), [data]);
   const notificationRows = useMemo(() => statusRows(data?.notificationCounts ?? {}), [data]);
   const parseRows = useMemo(() => statusRows(data?.parseRunStatus ?? {}), [data]);
@@ -505,22 +544,112 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                     <StatusBadge tone="warning">{data.metrics.studentsAt10Plus} students currently escalated</StatusBadge>
                   </div>
 
-                  <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
-                    {data.bandCounts.map((band) => (
-                      <SoftPanel key={band.id} className="space-y-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                              {band.shortLabel}
-                            </p>
-                            <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{band.count}</p>
-                          </div>
-                          <StatusBadge tone={band.tone}>{band.label}</StatusBadge>
+                  <div className="grid gap-5 xl:grid-cols-[minmax(16rem,19rem)_minmax(0,1fr)]">
+                    <SoftPanel className="space-y-5 border-white/80 bg-[linear-gradient(145deg,rgba(17,94,89,0.10),rgba(255,255,255,0.97)_48%,rgba(173,124,44,0.08))]">
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
+                          Operational view
+                        </p>
+                        <h3 className="font-display text-3xl text-[var(--color-ink)]">Escalation timeline</h3>
+                        <p className="text-sm leading-7 text-[var(--color-muted)]">
+                          This ladder stays cumulative for the selected source mode, so each threshold reflects the
+                          next family communication and follow-through step the team owes right now.
+                        </p>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                        <div className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/85 p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                            Students escalated
+                          </p>
+                          <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">
+                            {data.metrics.studentsAt10Plus}
+                          </p>
+                          <p className="mt-1 text-sm text-[var(--color-muted)]">Currently at 10 points or more.</p>
                         </div>
-                        <p className="text-sm font-semibold text-[var(--color-ink)]">{band.parentCommunication}</p>
-                        <p className="text-sm leading-7 text-[var(--color-muted)]">{band.adminAction}</p>
-                      </SoftPanel>
-                    ))}
+                        <div className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/85 p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                            Bands populated
+                          </p>
+                          <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{activeEscalationBands}</p>
+                          <p className="mt-1 text-sm text-[var(--color-muted)]">
+                            Thresholds with at least one student right now.
+                          </p>
+                        </div>
+                        <div className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/85 p-4">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                            Critical tier
+                          </p>
+                          <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">
+                            {data.metrics.studentsAt35Plus}
+                          </p>
+                          <p className="mt-1 text-sm text-[var(--color-muted)]">Students already at 35 points or above.</p>
+                        </div>
+                      </div>
+                    </SoftPanel>
+
+                    <div className="relative ml-3 border-l border-[var(--color-line-strong)] pl-7 md:pl-9">
+                      <div className="space-y-4">
+                        {data.bandCounts.map((band) => {
+                          const styles = handbookBandToneStyles(band.tone);
+
+                          return (
+                            <article
+                              key={band.id}
+                              className={cn(
+                                "relative overflow-hidden rounded-[1.6rem] border p-5 transition",
+                                styles.card,
+                                band.count === 0 ? "opacity-75" : "shadow-card"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "absolute -left-[2.18rem] top-7 h-4 w-4 rounded-full border-4 border-white shadow-sm",
+                                  styles.dot
+                                )}
+                              />
+                              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                <div className="space-y-1">
+                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                                    Threshold
+                                  </p>
+                                  <h3 className="font-display text-3xl text-[var(--color-ink)]">{band.shortLabel}</h3>
+                                  <p className="text-sm leading-6 text-[var(--color-muted)]">{band.label}</p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <StatusBadge tone={band.tone}>{band.label}</StatusBadge>
+                                  <span
+                                    className={cn(
+                                      "rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em]",
+                                      styles.chip
+                                    )}
+                                  >
+                                    {band.count} student{band.count === 1 ? "" : "s"}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                                <div className="rounded-[1.15rem] border border-white/80 bg-white/88 p-4">
+                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                                    Parent communication
+                                  </p>
+                                  <p className="mt-2 text-sm font-semibold leading-7 text-[var(--color-ink)]">
+                                    {band.parentCommunication}
+                                  </p>
+                                </div>
+                                <div className="rounded-[1.15rem] border border-white/80 bg-white/72 p-4">
+                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                                    Admin follow-through
+                                  </p>
+                                  <p className="mt-2 text-sm leading-7 text-[var(--color-ink)]">{band.adminAction}</p>
+                                </div>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </Panel>
 

@@ -73,11 +73,10 @@ export const demeritEscalationBands: DemeritEscalationBand[] = [
     tone: "warning",
     priority: 3,
     parentCommunication: "Send a certified letter and an email to the family.",
-    adminAction: "Scan the letter and place the copy into Sycamore and the student file.",
+    adminAction: "Send the formal certified letter and email to the family immediately.",
     adminMessage:
       "Issue the formal letter immediately and make sure the signed communication is archived in the student record.",
-    policyImpact:
-      "The handbook expects a documented certified letter at 30 points with the record scanned into Sycamore and the student file."
+    policyImpact: "The handbook expects a documented certified letter at 30 points."
   },
   {
     id: "points_35_39",
