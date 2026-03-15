@@ -3,12 +3,36 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentSession } from "@/lib/session";
 import { createStorageAdapter } from "@/lib/storage";
 
+type AuditScope = "all" | "sycamore_async";
+
 function startOfDayUtc(date: string): number {
   return Date.parse(`${date}T00:00:00.000Z`);
 }
 
 function endOfDayUtc(date: string): number {
   return Date.parse(`${date}T23:59:59.999Z`);
+}
+
+function parseScope(value: string | null): AuditScope {
+  return value === "sycamore_async" ? "sycamore_async" : "all";
+}
+
+function matchesScope(
+  event: {
+    eventType: string;
+    entityType: string;
+  },
+  scope: AuditScope
+): boolean {
+  if (scope === "all") {
+    return true;
+  }
+
+  return (
+    event.eventType.startsWith("sycamore_sync_") ||
+    event.entityType === "sycamore_sync_job" ||
+    event.entityType === "sycamore_sync_batch"
+  );
 }
 
 export async function GET(request: NextRequest) {
@@ -23,12 +47,15 @@ export async function GET(request: NextRequest) {
   const actor = request.nextUrl.searchParams.get("actor");
   const from = request.nextUrl.searchParams.get("from");
   const to = request.nextUrl.searchParams.get("to");
+  const scope = parseScope(request.nextUrl.searchParams.get("scope"));
   const limitRaw = request.nextUrl.searchParams.get("limit");
   const limit = limitRaw ? Number(limitRaw) : 200;
 
   const storage = createStorageAdapter();
   await storage.ensureSchema();
   let events = await storage.auditEvents.list();
+
+  events = events.filter((event) => matchesScope(event, scope));
 
   if (eventType) {
     events = events.filter((event) => event.eventType === eventType);

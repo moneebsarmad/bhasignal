@@ -20,6 +20,8 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
 
+type AuditScope = "all" | "sycamore_async";
+
 interface AuditEventRow {
   id: string;
   eventType: string;
@@ -30,7 +32,36 @@ interface AuditEventRow {
   createdAt: string;
 }
 
+interface AuditFiltersState {
+  scope: AuditScope;
+  eventType: string;
+  entityType: string;
+  entityId: string;
+  actor: string;
+  from: string;
+  to: string;
+  limit: string;
+}
+
+const AUDIT_SCOPE_OPTIONS: Array<{
+  key: AuditScope;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "all",
+    label: "All activity",
+    description: "Show the full audit trail."
+  },
+  {
+    key: "sycamore_async",
+    label: "Sycamore async jobs",
+    description: "Queued batches plus background Sycamore job starts, finishes, and failures."
+  }
+];
+
 export function AuditClient() {
+  const [scope, setScope] = useState<AuditScope>("all");
   const [eventType, setEventType] = useState("");
   const [entityType, setEntityType] = useState("");
   const [entityId, setEntityId] = useState("");
@@ -43,29 +74,43 @@ export function AuditClient() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadEvents = useCallback(async () => {
+  const loadEvents = useCallback(async (nextFilters?: Partial<AuditFiltersState>) => {
+    const filters: AuditFiltersState = {
+      scope: nextFilters?.scope ?? scope,
+      eventType: nextFilters?.eventType ?? eventType,
+      entityType: nextFilters?.entityType ?? entityType,
+      entityId: nextFilters?.entityId ?? entityId,
+      actor: nextFilters?.actor ?? actor,
+      from: nextFilters?.from ?? from,
+      to: nextFilters?.to ?? to,
+      limit: nextFilters?.limit ?? limit
+    };
+
     setIsLoading(true);
     setError(null);
     const params = new URLSearchParams();
-    if (eventType.trim()) {
-      params.set("eventType", eventType.trim());
+    if (filters.scope !== "all") {
+      params.set("scope", filters.scope);
     }
-    if (entityType.trim()) {
-      params.set("entityType", entityType.trim());
+    if (filters.eventType.trim()) {
+      params.set("eventType", filters.eventType.trim());
     }
-    if (entityId.trim()) {
-      params.set("entityId", entityId.trim());
+    if (filters.entityType.trim()) {
+      params.set("entityType", filters.entityType.trim());
     }
-    if (actor.trim()) {
-      params.set("actor", actor.trim());
+    if (filters.entityId.trim()) {
+      params.set("entityId", filters.entityId.trim());
     }
-    if (from) {
-      params.set("from", from);
+    if (filters.actor.trim()) {
+      params.set("actor", filters.actor.trim());
     }
-    if (to) {
-      params.set("to", to);
+    if (filters.from) {
+      params.set("from", filters.from);
     }
-    params.set("limit", limit);
+    if (filters.to) {
+      params.set("to", filters.to);
+    }
+    params.set("limit", filters.limit);
 
     const response = await fetch(`/api/audit/events?${params.toString()}`, { cache: "no-store" });
     const body = (await response.json().catch(() => null)) as
@@ -83,7 +128,7 @@ export function AuditClient() {
       current && nextEvents.some((event) => event.id === current) ? current : nextEvents[0]?.id ?? null
     );
     setIsLoading(false);
-  }, [actor, entityId, entityType, eventType, from, limit, to]);
+  }, [actor, entityId, entityType, eventType, from, limit, scope, to]);
 
   useEffect(() => {
     void loadEvents();
@@ -92,6 +137,21 @@ export function AuditClient() {
   function onApplyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void loadEvents();
+  }
+
+  function onApplyScope(nextScope: AuditScope) {
+    setScope(nextScope);
+    setEventType("");
+    setEntityType("");
+    setEntityId("");
+    setActor("");
+    void loadEvents({
+      scope: nextScope,
+      eventType: "",
+      entityType: "",
+      entityId: "",
+      actor: ""
+    });
   }
 
   const selectedEvent = events.find((event) => event.id === selectedEventId) ?? null;
@@ -112,8 +172,29 @@ export function AuditClient() {
 
       <Panel className="space-y-5">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="font-display text-2xl text-[var(--color-ink)]">Filters</h2>
+          <div className="space-y-1">
+            <h2 className="font-display text-2xl text-[var(--color-ink)]">Filters</h2>
+            <p className="text-sm text-[var(--color-muted)]">Use a quick scope when you want one slice of system history fast.</p>
+          </div>
           <StatusBadge tone="neutral">{limit} max rows</StatusBadge>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {AUDIT_SCOPE_OPTIONS.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => onApplyScope(option.key)}
+              className={cn(
+                "rounded-full border px-3.5 py-2 text-sm font-semibold transition",
+                scope === option.key
+                  ? "border-[var(--color-primary)] bg-[var(--color-primary)] text-white shadow-card"
+                  : "border-[var(--color-line)] bg-[var(--color-soft-surface)] text-[var(--color-muted)] hover:border-[var(--color-primary)] hover:bg-white hover:text-[var(--color-ink)]"
+              )}
+              title={option.description}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
         <form onSubmit={onApplyFilters} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Field label="Event type">
