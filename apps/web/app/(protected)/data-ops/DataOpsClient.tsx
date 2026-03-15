@@ -96,7 +96,7 @@ interface DataOpsSnapshot {
 }
 
 function sourceLabel(sourceType: string): string {
-  return sourceType === "sycamore_api" ? "Sycamore API" : sourceType === "manual_pdf" ? "Manual PDF" : sourceType;
+  return sourceType === "sycamore_api" ? "Sycamore sync" : sourceType === "manual_pdf" ? "Legacy PDF import" : sourceType;
 }
 
 export function DataOpsClient() {
@@ -124,16 +124,15 @@ export function DataOpsClient() {
     void loadStatus();
   }, [loadStatus]);
 
-  const parserNeedsAttention = Boolean(data?.parser.configured && data.parser.ok === false);
   const sycamoreNeedsAttention = Boolean(data?.sycamore.error);
-  const systemsNeedAttention = parserNeedsAttention || sycamoreNeedsAttention;
+  const systemsNeedAttention = sycamoreNeedsAttention;
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Admin controls"
         title="Data operations and system health"
-        description="Monitor storage mode, parser reachability, workflow backlog, and recent operational failures without dropping into backend implementation details."
+        description="Monitor storage mode, Sycamore sync health, workflow backlog, and recent operational failures without dropping into backend implementation details."
         actions={
           <Button type="button" variant="secondary" onClick={() => void loadStatus()} disabled={isLoading}>
             <RefreshCcw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
@@ -160,8 +159,8 @@ export function DataOpsClient() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <StatusBadge tone={!data.parser.configured ? "neutral" : data.parser.ok ? "success" : "danger"}>
-                {!data.parser.configured ? "Parser not configured" : data.parser.ok ? "Parser online" : "Parser offline"}
+              <StatusBadge tone={data.sycamore.configured ? "success" : "warning"}>
+                {data.sycamore.configured ? "Sycamore configured" : "Sycamore not configured"}
               </StatusBadge>
               <StatusBadge tone="info">{data.storage.label}</StatusBadge>
             </div>
@@ -169,18 +168,25 @@ export function DataOpsClient() {
 
           <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
             <StatCard
-              label="Active jobs"
-              value={data.ingestion.activeJobs}
-              description="Pending or processing."
+              label="Stored logs"
+              value={data.sycamore.totalLogs}
+              description="Rows mirrored from Sycamore."
               icon={Workflow}
               href="/ingestion"
             />
             <StatCard
-              label="Open review tasks"
-              value={data.review.open}
-              description="Waiting on review."
+              label="Linked logs"
+              value={data.sycamore.linkedLogs}
+              description="Matched to local students."
+              icon={Database}
+              href="/students"
+            />
+            <StatCard
+              label="Failed syncs"
+              value={data.sycamore.failedSyncs}
+              description="Need follow-up."
               icon={ShieldAlert}
-              href="/review?status=open"
+              href="/ingestion"
             />
             <StatCard
               label="Queued notifications"
@@ -195,13 +201,6 @@ export function DataOpsClient() {
               description="Past due."
               icon={ShieldAlert}
               href="/students"
-            />
-            <StatCard
-              label="Failed parse runs"
-              value={data.ingestion.failedJobs}
-              description="Need retry or investigation."
-              icon={Database}
-              href="/ingestion"
             />
           </section>
 
@@ -219,23 +218,6 @@ export function DataOpsClient() {
                       <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">{data.storage.detail}</p>
                     </div>
                     <StatusBadge tone="info">{data.storage.mode}</StatusBadge>
-                  </div>
-                </Panel>
-
-                <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold text-[var(--color-ink)]">Parser service</p>
-                      <p className="mt-2 text-sm leading-7 text-[var(--color-muted)]">
-                        {data.parser.baseUrl ?? "No parser base URL configured for this environment."}
-                      </p>
-                      {data.parser.error ? <p className="mt-2 text-sm text-[var(--color-danger)]">{data.parser.error}</p> : null}
-                    </div>
-                    <StatusBadge
-                      tone={!data.parser.configured ? "neutral" : data.parser.ok ? "success" : "danger"}
-                    >
-                      {!data.parser.configured ? "not configured" : data.parser.ok ? "healthy" : "degraded"}
-                    </StatusBadge>
                   </div>
                 </Panel>
 
@@ -266,53 +248,59 @@ export function DataOpsClient() {
 
               <div className="grid gap-4 md:grid-cols-3">
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Review backlog</p>
-                  <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{data.review.open}</p>
-                  <p className="mt-2 text-sm text-[var(--color-muted)]">Tasks still open in the review queue.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Total sync runs</p>
+                  <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{data.sycamore.totalSyncs}</p>
+                  <p className="mt-2 text-sm text-[var(--color-muted)]">Recorded Sycamore sync executions.</p>
                 </Panel>
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Flagged rows</p>
-                  <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{data.ingestion.flaggedRows}</p>
-                  <p className="mt-2 text-sm text-[var(--color-muted)]">Rows surfaced for manual confirmation so far.</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Active interventions</p>
+                  <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{data.backlog.activeInterventions}</p>
+                  <p className="mt-2 text-sm text-[var(--color-muted)]">Students currently carrying intervention work.</p>
                 </Panel>
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Last completed job</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">Last successful sync</p>
                   <p className="mt-2 text-sm font-semibold text-[var(--color-ink)]">
-                    {data.ingestion.lastCompletedAt ? new Date(data.ingestion.lastCompletedAt).toLocaleString() : "No completed jobs yet"}
+                    {data.sycamore.lastSuccessfulCompletedAt
+                      ? new Date(data.sycamore.lastSuccessfulCompletedAt).toLocaleString()
+                      : "No successful sync yet"}
                   </p>
                 </Panel>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                {Object.entries(data.ingestion.bySource).map(([key, summary]) => (
-                  <Panel key={key} className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-[var(--color-ink)]">{sourceLabel(key)}</p>
-                        <p className="mt-2 text-sm text-[var(--color-muted)]">{summary.totalJobs} jobs recorded.</p>
+              {Object.keys(data.ingestion.bySource).length > 0 ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {Object.entries(data.ingestion.bySource).map(([key, summary]) => (
+                    <Panel key={key} className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-[var(--color-ink)]">{sourceLabel(key)}</p>
+                          <p className="mt-2 text-sm text-[var(--color-muted)]">
+                            {summary.totalJobs} historical jobs recorded.
+                          </p>
+                        </div>
+                        <StatusBadge tone={summary.failedJobs > 0 ? "warning" : "info"}>
+                          {summary.failedJobs} failed
+                        </StatusBadge>
                       </div>
-                      <StatusBadge tone={summary.failedJobs > 0 ? "warning" : "info"}>
-                        {summary.failedJobs} failed
-                      </StatusBadge>
-                    </div>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">Review required</p>
-                        <p className="mt-1 text-lg font-semibold text-[var(--color-ink)]">{summary.reviewRequiredJobs}</p>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">Review required</p>
+                          <p className="mt-1 text-lg font-semibold text-[var(--color-ink)]">{summary.reviewRequiredJobs}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">Flagged rows</p>
+                          <p className="mt-1 text-lg font-semibold text-[var(--color-ink)]">{summary.flaggedRows}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-subtle)]">Flagged rows</p>
-                        <p className="mt-1 text-lg font-semibold text-[var(--color-ink)]">{summary.flaggedRows}</p>
-                      </div>
-                    </div>
-                    {summary.lastCompletedAt ? (
-                      <p className="mt-4 text-sm text-[var(--color-muted)]">
-                        Last completed {new Date(summary.lastCompletedAt).toLocaleString()}
-                      </p>
-                    ) : null}
-                  </Panel>
-                ))}
-              </div>
+                      {summary.lastCompletedAt ? (
+                        <p className="mt-4 text-sm text-[var(--color-muted)]">
+                          Last completed {new Date(summary.lastCompletedAt).toLocaleString()}
+                        </p>
+                      ) : null}
+                    </Panel>
+                  ))}
+                </div>
+              ) : null}
 
               {data.sycamore.configured ? (
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
@@ -371,7 +359,7 @@ export function DataOpsClient() {
               {data.recentFailures.length === 0 ? (
                 <Panel className="border-[var(--color-line)] bg-[var(--color-soft-surface)] p-4 shadow-none">
                   <p className="text-sm leading-7 text-[var(--color-muted)]">
-                    No recent failed parse runs or failed notifications are currently visible in this environment.
+                    No recent Sycamore sync issues or failed notifications are currently visible in this environment.
                   </p>
                 </Panel>
               ) : (
@@ -392,16 +380,14 @@ export function DataOpsClient() {
                             <td className={tableCellClassName}>{new Date(failure.createdAt).toLocaleString()}</td>
                             <td className={tableCellClassName}>
                               <StatusBadge tone={failure.kind === "parse_run" ? "danger" : "warning"}>
-                                {failure.kind.replace(/_/g, " ")}
+                                {failure.kind === "parse_run" ? "legacy import" : failure.kind.replace(/_/g, " ")}
                               </StatusBadge>
                             </td>
                             <td className={tableCellClassName}>{failure.label}</td>
                             <td className={tableCellClassName}>
                               <Link
                                 href={
-                                  failure.kind === "parse_run"
-                                    ? `/review?status=all&parseRunId=${encodeURIComponent(failure.id)}`
-                                    : "/notifications"
+                                  failure.kind === "parse_run" ? "/ingestion" : "/notifications"
                                 }
                                 className="font-semibold text-[var(--color-primary)] hover:text-[var(--color-primary-strong)]"
                               >

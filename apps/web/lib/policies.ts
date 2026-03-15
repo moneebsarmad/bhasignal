@@ -4,6 +4,8 @@ import type { AuditEvent, Intervention, ParseRun, Policy, Student } from "@syc/d
 import type { StorageRepositories } from "@syc/storage";
 import { z } from "zod";
 
+import { listDisciplineEvents } from "@/lib/discipline-events";
+
 export const policyInputSchema = z.object({
   baseThreshold: z.number().int().nonnegative(),
   warningOffsets: z.array(z.number().int()),
@@ -102,22 +104,23 @@ export async function evaluatePolicyAndInterventions(input: {
   const templates = parseInterventionTemplates(policy);
   const triggers = buildTriggerLevels(policy);
   const students = await storage.students.list();
-  const approvedIncidents = await storage.approvedIncidents.list();
+  const disciplineEvents = await listDisciplineEvents(storage, undefined, { sourceType: "sycamore_api" });
   const interventions = await storage.interventions.list();
   const now = new Date();
   const nowIso = now.toISOString();
 
   const studentMap = new Map(students.map((student) => [student.id, student] as const));
   const scoreByStudent = new Map<string, number>();
-  for (const incident of approvedIncidents) {
-    const current = scoreByStudent.get(incident.studentId) ?? 0;
-    scoreByStudent.set(incident.studentId, current + incident.points);
-    if (!studentMap.has(incident.studentId)) {
-      studentMap.set(incident.studentId, {
-        id: incident.studentId,
-        externalId: null,
-        fullName: incident.studentId,
-        grade: "unknown",
+  for (const event of disciplineEvents) {
+    const studentId = event.localStudentId ?? event.studentId;
+    const current = scoreByStudent.get(studentId) ?? 0;
+    scoreByStudent.set(studentId, current + event.points);
+    if (!studentMap.has(studentId)) {
+      studentMap.set(studentId, {
+        id: studentId,
+        externalId: event.studentExternalId,
+        fullName: event.studentName ?? studentId,
+        grade: event.grade ?? "unknown",
         active: true,
         createdAt: nowIso,
         updatedAt: nowIso
@@ -288,11 +291,12 @@ export async function evaluatePolicyAndInterventions(input: {
 
 export async function buildStudentScores(storage: StorageRepositories): Promise<StudentScore[]> {
   const students = await storage.students.list();
-  const incidents = await storage.approvedIncidents.list();
+  const disciplineEvents = await listDisciplineEvents(storage, undefined, { sourceType: "sycamore_api" });
   const scoreByStudent = new Map<string, number>();
 
-  for (const incident of incidents) {
-    scoreByStudent.set(incident.studentId, (scoreByStudent.get(incident.studentId) ?? 0) + incident.points);
+  for (const event of disciplineEvents) {
+    const studentId = event.localStudentId ?? event.studentId;
+    scoreByStudent.set(studentId, (scoreByStudent.get(studentId) ?? 0) + event.points);
   }
 
   const rows: StudentScore[] = students.map((student) => ({

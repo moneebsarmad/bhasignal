@@ -1,13 +1,12 @@
-import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   BarChart3,
   BellDot,
   FileSpreadsheet,
   LayoutDashboard,
+  type LucideIcon,
   Scale,
   ScrollText,
-  ShieldCheck,
   Upload,
   Users
 } from "lucide-react";
@@ -33,18 +32,6 @@ export interface PageMeta {
   description: string;
 }
 
-function personalizeNavItem(item: NavItem, role: UserRole): NavItem {
-  if (role === "admin" && item.href === "/review") {
-    return {
-      ...item,
-      label: "Exceptions",
-      description: "Fallback PDF review when imported rows need manual correction."
-    };
-  }
-
-  return item;
-}
-
 const allNavItems: NavItem[] = [
   {
     href: "/dashboard",
@@ -56,15 +43,8 @@ const allNavItems: NavItem[] = [
   {
     href: "/ingestion",
     label: "Data Intake",
-    description: "Manage Sycamore syncs and fallback imports.",
+    description: "Manage Sycamore syncs and monitor background intake jobs.",
     icon: Upload,
-    roles: ["admin", "reviewer"]
-  },
-  {
-    href: "/review",
-    label: "Review",
-    description: "Resolve low-confidence records before promotion.",
-    icon: ShieldCheck,
     roles: ["admin", "reviewer"]
   },
   {
@@ -105,7 +85,7 @@ const allNavItems: NavItem[] = [
   {
     href: "/data-ops",
     label: "Data Ops",
-    description: "Monitor parser, storage, and workflow system health.",
+    description: "Monitor Sycamore sync, storage, and workflow system health.",
     icon: Activity,
     roles: ["admin"]
   }
@@ -128,16 +108,12 @@ const navSectionConfigByRole: Record<UserRole, ReadonlyArray<{ label: string; hr
     {
       label: "Governance",
       hrefs: ["/audit"]
-    },
-    {
-      label: "Exceptions",
-      hrefs: ["/review"]
     }
   ],
   reviewer: [
     {
       label: "Operations",
-      hrefs: ["/dashboard", "/ingestion", "/review", "/students"]
+      hrefs: ["/dashboard", "/ingestion", "/students"]
     },
     {
       label: "Analysis",
@@ -151,7 +127,7 @@ const navSectionConfigByRole: Record<UserRole, ReadonlyArray<{ label: string; hr
 };
 
 function itemsForRole(role: UserRole): NavItem[] {
-  return allNavItems.filter((item) => item.roles.includes(role)).map((item) => personalizeNavItem(item, role));
+  return allNavItems.filter((item) => item.roles.includes(role));
 }
 
 function sectionsForRole(role: UserRole): NavSection[] {
@@ -178,11 +154,7 @@ export const pageMetaByPath: Record<string, PageMeta> = {
   },
   "/ingestion": {
     title: "Data Intake",
-    description: "Run primary Sycamore syncs, manage fallback PDF imports, and keep intake operations orderly."
-  },
-  "/review": {
-    title: "Exception Review",
-    description: "Work through fallback-import and other low-confidence records before anything is promoted."
+    description: "Run Sycamore syncs, monitor intake freshness, and keep source data current."
   },
   "/students": {
     title: "Student Profiles",
@@ -206,7 +178,7 @@ export const pageMetaByPath: Record<string, PageMeta> = {
   },
   "/data-ops": {
     title: "Data Operations",
-    description: "Inspect parser health, storage mode, job failures, and workflow backlogs without exposing database internals."
+    description: "Inspect Sycamore sync health, storage mode, and workflow backlogs without exposing database internals."
   }
 };
 

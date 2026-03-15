@@ -48,6 +48,9 @@ interface DashboardPayload {
     openInterventions: number;
     queuedNotifications: number;
     failedNotifications: number;
+    parentOutreachDraftsPending: number;
+    approvedParentOutreach: number;
+    studentsMissingParentEmailAt10To19: number;
   };
   bandCounts: Array<{
     id: string;
@@ -196,10 +199,6 @@ function badgeToneForKey(key: string): "neutral" | "info" | "success" | "warning
     return "danger";
   }
   return "neutral";
-}
-
-function sourceLabel(sourceType: string): string {
-  return sourceType === "manual_pdf" ? "PDF exception mode" : "Sycamore primary";
 }
 
 function syncModeLabel(value: "initial_backfill" | "incremental" | "manual_range" | null): string {
@@ -572,15 +571,9 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
       />
 
       <Panel className="space-y-5">
-            <form onSubmit={onApplyFilters} className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_auto]">
+            <form onSubmit={onApplyFilters} className="grid gap-4 md:grid-cols-[1fr_auto] xl:grid-cols-[1fr_auto]">
               <Field label="Grade" hint="Leave blank for all grades.">
                 <Input value={grade} onChange={(event) => setGrade(event.currentTarget.value)} placeholder="e.g. 8" />
-              </Field>
-              <Field label="Dataset mode">
-                <Select value={sourceType} onChange={(event) => setSourceType(event.currentTarget.value)}>
-                  <option value="sycamore_api">Sycamore primary</option>
-                  <option value="manual_pdf">PDF exception mode</option>
-                </Select>
               </Field>
               <div className="flex items-end">
                 <Button type="submit" variant="primary" className="w-full xl:w-auto" disabled={isLoading}>
@@ -593,12 +586,6 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
       {error ? (
         <InlineAlert tone="danger" title="Dashboard metrics could not be loaded.">
           {error}
-        </InlineAlert>
-      ) : null}
-
-      {data?.filters.sourceType === "manual_pdf" ? (
-        <InlineAlert tone="warning" title="PDF exception mode is active.">
-          This command center is showing fallback import data instead of the Sycamore primary dataset.
         </InlineAlert>
       ) : null}
 
@@ -632,7 +619,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                 />
               </section>
 
-              <section className="grid gap-5 md:grid-cols-3">
+              <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
                 <SoftPanel className="space-y-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
                     Open interventions
@@ -651,7 +638,27 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                   </p>
                   <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.failedNotifications}</p>
                 </SoftPanel>
+                <SoftPanel className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
+                    Parent drafts pending
+                  </p>
+                  <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.parentOutreachDraftsPending}</p>
+                </SoftPanel>
+                <SoftPanel className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
+                    Approved parent emails
+                  </p>
+                  <p className="font-display text-4xl text-[var(--color-ink)]">{data.metrics.approvedParentOutreach}</p>
+                </SoftPanel>
               </section>
+
+              {data.metrics.studentsMissingParentEmailAt10To19 > 0 ? (
+                <InlineAlert tone="warning" title="Parent contact coverage is incomplete.">
+                  {data.metrics.studentsMissingParentEmailAt10To19} student
+                  {data.metrics.studentsMissingParentEmailAt10To19 === 1 ? "" : "s"} in the 10-19 band do not currently
+                  have an email-enabled guardian contact on file.
+                </InlineAlert>
+              ) : null}
 
               <section className="space-y-5">
                 <Panel className="space-y-5">

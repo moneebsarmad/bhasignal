@@ -40,8 +40,8 @@ function seedApprovedIncident(points: number): ApprovedIncident {
   return {
     id: `inc_${points}`,
     studentId: "stu_1",
-    sourceType: "manual_pdf",
-    sourceRecordId: `pdf_row_${String(Math.abs(points)).padStart(4, "0")}`,
+    sourceType: "sycamore_api",
+    sourceRecordId: `sycamore_log_${String(Math.abs(points)).padStart(4, "0")}`,
     externalStudentId: null,
     gradeAtEvent: "8",
     eventType: null,

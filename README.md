@@ -1,11 +1,10 @@
 # Signal
 
-Manual-first MVP monorepo scaffold.
+Sycamore-first discipline operations monorepo scaffold.
 
 ## Structure
 
 - `apps/web`: Next.js admin app.
-- `services/parser`: FastAPI parser service.
 - `packages/domain`: Shared domain types.
 - `packages/storage`: Repository interfaces.
 - `packages/config`: Shared config validation helpers.
@@ -19,23 +18,13 @@ npm install
 npm run dev:web
 ```
 
-### 2) Python parser
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -e services/parser[dev]
-uvicorn parser_service.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### 3) Tests
+### 2) Tests
 
 ```bash
 npm run check
-npm run test:parser
 ```
 
-### 3.1) Local end-to-end smoke workflow
+### 2.1) Local end-to-end smoke workflow
 
 ```bash
 npm run smoke:local --workspace @syc/web
@@ -76,27 +65,24 @@ git config core.hooksPath .githooks
 
 - Phases `P0` to `P8` implemented in code:
   - auth + protected admin shell
-  - manual PDF ingestion pipeline with parser service
-  - review queue with approve/edit/reject + canonical promotion
+  - Sycamore sync intake and roster linking
   - policy versioning and intervention engine
   - notification config/queue/dispatch with override audit
   - dashboard, students timeline, and audit explorer
 - Phase `P9` engineering hardening pass completed in code:
   - security checks (RBAC review, secrets validation, PII log scrubbing)
-  - reliability simulations (parser outage, email failure, Sheets rate limit handling)
+  - reliability simulations (email failure, Sheets rate limit handling)
   - performance smoke test for medium ingestion batch
-- Parser regression corpus + quality metrics tests added.
 - Operational runbooks added in `docs/runbooks/`.
-- Direct read-only Sycamore sync is available:
+- Direct Sycamore sync is the active discipline source:
   - manual admin sync via `/api/sycamore/sync`
   - nightly production sync via `vercel.json` cron
   - imported SIS rows land in `sycamore_discipline_logs` and `sycamore_sync_log`
   - normalized SIS fields include `points`, `level`, `violation`, `violation_raw`, `resolution`, and `author_name`
-  - these rows power dashboard/reporting only and do not enter the review queue automatically
+  - these rows now drive the active discipline workflows across the app
 
 ## Runbooks
 
-- `docs/runbooks/parser-failure.md`
 - `docs/runbooks/sheets-quota-issue.md`
 - `docs/runbooks/notification-outage.md`
 - `docs/runbooks/policy-rollback.md`

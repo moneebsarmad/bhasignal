@@ -2,7 +2,6 @@ import { resolve } from "node:path";
 
 import type { StorageRepositories } from "@syc/storage";
 
-import { parserBaseUrl, parserRequestTimeoutMs } from "@/lib/parser-config";
 import { buildSycamoreDataOpsSummary } from "@/lib/sycamore-direct-sync";
 import type { SycamoreStore } from "@/lib/sycamore-direct-store";
 
@@ -148,52 +147,11 @@ function summarizeParseRuns(parseRuns: Awaited<ReturnType<StorageRepositories["p
 }
 
 async function probeParser(): Promise<DataOpsSnapshot["parser"]> {
-  const configuredBaseUrl = process.env.PARSER_BASE_URL?.trim() || null;
-  if (!configuredBaseUrl) {
-    return {
-      configured: false,
-      ok: null,
-      baseUrl: null
-    };
-  }
-
-  const baseUrl = parserBaseUrl();
-  const timeoutMs = parserRequestTimeoutMs();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(`${baseUrl}/health`, { cache: "no-store", signal: controller.signal });
-    if (!response.ok) {
-      return {
-        configured: true,
-        ok: false,
-        baseUrl,
-        status: response.status,
-        error: "Parser health check failed."
-      };
-    }
-    return {
-      configured: true,
-      ok: true,
-      baseUrl,
-      status: response.status
-    };
-  } catch (error) {
-    return {
-      configured: true,
-      ok: false,
-      baseUrl,
-      error:
-        error instanceof Error && error.name === "AbortError"
-          ? `Parser health check timed out after ${timeoutMs}ms`
-          : error instanceof Error
-            ? error.message
-            : "Unknown parser connection error."
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+  return {
+    configured: false,
+    ok: null,
+    baseUrl: null
+  };
 }
 
 export async function buildDataOpsSnapshot(

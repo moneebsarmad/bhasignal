@@ -397,7 +397,6 @@ export function DeepAnalytics({ embedded = false }: { embedded?: boolean }) {
           <Field label="Dataset mode">
             <Select value={sourceType} onChange={(event) => setSourceType(event.currentTarget.value)}>
               <option value="sycamore_api">Sycamore primary</option>
-              <option value="manual_pdf">PDF exception mode</option>
             </Select>
           </Field>
           <Field label="Student">

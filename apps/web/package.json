@@ -10,8 +10,6 @@
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "node --import tsx --test",
     "smoke:local": "node ./scripts/smoke-local.mjs",
-    "preview:pdf": "node ./scripts/preview-pdf-parse.mjs",
-    "ingest:pdf": "node ./scripts/ingest-pdf-path.mjs",
     "sheets:bootstrap": "node ./scripts/bootstrap-sheets.mjs",
     "sheets:verify": "tsx ./scripts/verify-sheets-adapter.ts",
     "sycamore:probe": "tsx ./scripts/probe-sycamore.ts"

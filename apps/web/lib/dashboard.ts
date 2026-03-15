@@ -28,6 +28,9 @@ export interface DashboardSnapshot {
     openInterventions: number;
     queuedNotifications: number;
     failedNotifications: number;
+    parentOutreachDraftsPending: number;
+    approvedParentOutreach: number;
+    studentsMissingParentEmailAt10To19: number;
   };
   bandCounts: Array<{
     id: DemeritEscalationBandId;
@@ -96,7 +99,7 @@ function normalizeFilterValue(value: string | undefined): string {
 }
 
 function normalizeSourceType(value: string | undefined): IngestionSourceType {
-  return value === "manual_pdf" ? value : DEFAULT_SOURCE_TYPE;
+  return DEFAULT_SOURCE_TYPE;
 }
 
 function incrementCounter(record: Record<string, number>, key: string): void {
@@ -151,12 +154,13 @@ export async function buildDashboardSnapshot(
   storage: StorageRepositories,
   filters: DashboardFilters
 ): Promise<DashboardSnapshot> {
-  const [parseRuns, interventions, notifications, students, disciplineEvents] = await Promise.all([
+  const [parseRuns, interventions, notifications, students, disciplineEvents, guardianContacts] = await Promise.all([
     storage.parseRuns.list(),
     storage.interventions.list(),
     storage.notifications.list(),
     storage.students.list(),
-    listDisciplineEvents(storage)
+    listDisciplineEvents(storage),
+    storage.guardianContacts.list()
   ]);
 
   const normalizedFilters = {
@@ -304,6 +308,11 @@ export async function buildDashboardSnapshot(
   const scopedLocalStudentIds = new Set(
     actionQueue.map((student) => student.localStudentId).filter((value): value is string => Boolean(value))
   );
+  const emailEnabledGuardianStudentIds = new Set(
+    guardianContacts
+      .filter((contact) => contact.isActive && contact.allowEmail && Boolean(contact.email))
+      .map((contact) => contact.studentId)
+  );
 
   const interventionCounts: Record<string, number> = {};
   const activeInterventionCountByStudent = new Map<string, number>();
@@ -323,6 +332,8 @@ export async function buildDashboardSnapshot(
   const notificationCounts: Record<string, number> = {};
   const queuedNotificationsByStudent = new Map<string, number>();
   const failedNotificationsByStudent = new Map<string, number>();
+  let parentOutreachDraftsPending = 0;
+  let approvedParentOutreach = 0;
   for (const notification of notifications) {
     if (!scopedLocalStudentIds.has(notification.studentId)) {
       continue;
@@ -339,6 +350,12 @@ export async function buildDashboardSnapshot(
         notification.studentId,
         (failedNotificationsByStudent.get(notification.studentId) ?? 0) + 1
       );
+    }
+    if ((notification.kind ?? "policy") === "parent_outreach" && notification.status === "draft") {
+      parentOutreachDraftsPending += 1;
+    }
+    if ((notification.kind ?? "policy") === "parent_outreach" && notification.status === "approved") {
+      approvedParentOutreach += 1;
     }
   }
 
@@ -421,7 +438,15 @@ export async function buildDashboardSnapshot(
         .filter(([status]) => ["open", "in_progress", "overdue"].includes(status))
         .reduce((sum, [, count]) => sum + count, 0),
       queuedNotifications: notificationCounts.queued ?? 0,
-      failedNotifications: notificationCounts.failed ?? 0
+      failedNotifications: notificationCounts.failed ?? 0,
+      parentOutreachDraftsPending,
+      approvedParentOutreach,
+      studentsMissingParentEmailAt10To19: actionQueue.filter(
+        (student) =>
+          student.currentBandId === "points_10_19" &&
+          student.localStudentId &&
+          !emailEnabledGuardianStudentIds.has(student.localStudentId)
+      ).length
     },
     bandCounts,
     actionQueue: actionQueueWithPosture,

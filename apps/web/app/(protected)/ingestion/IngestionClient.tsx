@@ -6,7 +6,6 @@ import { AlertTriangle, FileUp, RefreshCcw, Sparkles } from "lucide-react";
 import type { ParseRun } from "@syc/domain";
 import {
   Button,
-  Checkbox,
   Field,
   EmptyState,
   InlineAlert,
@@ -250,6 +249,164 @@ function syncStageSubtitle(progress: SycamoreSyncProgressSnapshot, stage: (typeo
   }
 }
 
+function splitWarningCode(warning: string): { code: string; detail: string | null } {
+  const separatorIndex = warning.indexOf(":");
+  if (separatorIndex === -1) {
+    return {
+      code: warning,
+      detail: null
+    };
+  }
+
+  return {
+    code: warning.slice(0, separatorIndex),
+    detail: warning.slice(separatorIndex + 1) || null
+  };
+}
+
+function humanizeWarningCode(code: string): string {
+  return code
+    .replace(/^sycamore_/, "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatSycamoreWarningDetail(warning: string): {
+  title: string;
+  description: string | null;
+  reference: string | null;
+} {
+  const { code, detail } = splitWarningCode(warning);
+
+  switch (code) {
+    case "sycamore_no_records":
+      return {
+        title: "No records found",
+        description: "Sycamore returned no discipline records for part of the requested window.",
+        reference: detail
+      };
+    case "sycamore_student_overview_discovery_used":
+      return {
+        title: "Student timeline fallback used",
+        description: "The sync had to scan student timelines because the normal school-wide feed was not reliable enough.",
+        reference: detail
+      };
+    case "sycamore_school_list_empty_fallback_used":
+      return {
+        title: "School feed was empty",
+        description: "The school-wide feed returned no usable rows, so the sync fell back to student timeline scanning.",
+        reference: detail
+      };
+    case "sycamore_school_rows_out_of_window_skipped":
+      return {
+        title: "Out-of-window rows skipped",
+        description: "Sycamore returned rows outside the selected date range and the sync ignored them.",
+        reference: detail
+      };
+    case "sycamore_school_rows_missing_ids_fallback_used":
+      return {
+        title: "Feed rows missing IDs",
+        description: "Some school-feed rows were missing stable IDs, so the sync used a safer fallback path.",
+        reference: detail
+      };
+    case "sycamore_school_rows_missing_ids_candidate_fallback_used":
+      return {
+        title: "Candidate fallback used",
+        description: "The school feed lacked stable IDs, so the sync derived candidate students and scanned those timelines.",
+        reference: detail
+      };
+    case "sycamore_existing_logs_skipped":
+      return {
+        title: "Existing mirrored rows skipped",
+        description: "These records were already mirrored locally and were not written again.",
+        reference: detail
+      };
+    case "sycamore_target_student_id_not_found":
+      return {
+        title: "Target student ID not found",
+        description: "A requested student ID could not be matched to a roster record.",
+        reference: detail
+      };
+    case "sycamore_target_student_name_not_found":
+      return {
+        title: "Target student name not found",
+        description: "A requested student name could not be matched to a roster record.",
+        reference: detail
+      };
+    case "sycamore_student_scan_skipped_missing_id":
+      return {
+        title: "Student scan skipped",
+        description: "A roster entry was missing the Sycamore student ID required for discovery.",
+        reference: detail
+      };
+    case "sycamore_student_scan_failed": {
+      const [studentId, ...messageParts] = detail?.split(":") ?? [];
+      return {
+        title: "Student scan failed",
+        description: "The sync could not scan one student's timeline.",
+        reference:
+          [studentId ? `Student ${studentId}` : null, messageParts.length > 0 ? messageParts.join(":") : null]
+            .filter(Boolean)
+            .join(" | ") || detail
+      };
+    }
+    case "sycamore_skipped_entry_missing_ids":
+      return {
+        title: "Discovered row missing IDs",
+        description: "A discovered discipline row was missing the student ID or log ID needed for detail fetch.",
+        reference: detail
+      };
+    case "sycamore_detail_fetch_failed": {
+      const [studentId, logId, ...messageParts] = detail?.split(":") ?? [];
+      return {
+        title: "Discipline detail fetch failed",
+        description: "The sync found a record but could not load its full discipline detail page.",
+        reference:
+          [
+            studentId ? `Student ${studentId}` : null,
+            logId ? `Log ${logId}` : null,
+            messageParts.length > 0 ? messageParts.join(":") : null
+          ]
+            .filter(Boolean)
+            .join(" | ") || detail
+      };
+    }
+    case "sycamore_detention_fetch_failed": {
+      const [studentId, detentionId, ...messageParts] = detail?.split(":") ?? [];
+      return {
+        title: "Detention detail fetch failed",
+        description: "The discipline row loaded, but the linked detention detail could not be fetched.",
+        reference:
+          [
+            studentId ? `Student ${studentId}` : null,
+            detentionId ? `Detention ${detentionId}` : null,
+            messageParts.length > 0 ? messageParts.join(":") : null
+          ]
+            .filter(Boolean)
+            .join(" | ") || detail
+      };
+    }
+    case "sycamore_roster_sync_failed":
+      return {
+        title: "Roster sync failed",
+        description: "The student roster refresh encountered a problem during this batch.",
+        reference: detail
+      };
+    case "sycamore_student_target_sync":
+      return {
+        title: "Targeted student sync",
+        description: "This batch was intentionally scoped to selected students.",
+        reference: detail
+      };
+    default:
+      return {
+        title: humanizeWarningCode(code),
+        description: code.startsWith("sycamore_") ? "The Sycamore sync reported a warning for this batch." : null,
+        reference: detail
+      };
+  }
+}
+
 export function IngestionClient() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [jobs, setJobs] = useState<ParseRun[]>([]);
@@ -268,8 +425,10 @@ export function IngestionClient() {
   const [syncNow, setSyncNow] = useState(() => Date.now());
   const [showFallbackTools, setShowFallbackTools] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [selectedWarningBatchId, setSelectedWarningBatchId] = useState<string | null>(null);
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const warningsPanelRef = useRef<HTMLDivElement | null>(null);
   const syncProgress = syncBatch?.progress ?? null;
   const isSyncing = isStartingSync || Boolean(syncBatch && (syncBatch.status === "queued" || syncBatch.status === "running"));
 
@@ -525,6 +684,13 @@ export function IngestionClient() {
     }
   }
 
+  function showBatchWarnings(batch: SycamoreSyncBatch) {
+    setSelectedWarningBatchId(batch.batchId);
+    window.requestAnimationFrame(() => {
+      warningsPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   const activeSyncBatchId = syncBatch?.batchId ?? null;
   const activeSyncBatchStatus = syncBatch?.status ?? null;
 
@@ -576,19 +742,6 @@ export function IngestionClient() {
   }, [activeSyncBatchId, activeSyncBatchStatus]);
 
   const summary = useMemo(() => {
-    const uploadResults = lastResult?.uploadResults ?? [];
-    const successfulManualUploads = uploadResults.filter((result) => result.parseRun);
-    const failedManualUploads = uploadResults.filter((result) => result.error);
-
-    if (successfulManualUploads.length > 0) {
-      if (successfulManualUploads.length === 1 && failedManualUploads.length === 0) {
-        const run = successfulManualUploads[0]?.parseRun;
-        return run ? `Fallback PDF job ${run.id} finished with status ${run.status}.` : null;
-      }
-
-      return `Processed ${uploadResults.length} fallback PDF${uploadResults.length === 1 ? "" : "s"}: ${successfulManualUploads.length} job${successfulManualUploads.length === 1 ? "" : "s"} created${failedManualUploads.length > 0 ? `, ${failedManualUploads.length} failed` : ""}.`;
-    }
-
     if (lastResult?.sycamoreSync) {
       const result = lastResult.sycamoreSync;
       const syncLabel =
@@ -606,11 +759,7 @@ export function IngestionClient() {
       return `${syncLabel} Sycamore sync ${result.window.startDate} to ${result.window.endDate} stored ${result.recordsUpserted} record${result.recordsUpserted === 1 ? "" : "s"}${result.status === "partial" ? " with warnings" : ""}.`;
     }
 
-    if (!lastResult?.parseRun) {
-      return null;
-    }
-
-    return `Fallback PDF job ${lastResult.parseRun.id} finished with status ${lastResult.parseRun.status}.`;
+    return null;
   }, [lastResult]);
 
   const summaryTone = useMemo<"info" | "success">(() => {
@@ -632,17 +781,27 @@ export function IngestionClient() {
     return "Latest intake updated.";
   }, [lastResult]);
 
+  const selectedWarningBatch = useMemo(() => {
+    if (selectedWarningBatchId) {
+      if (syncBatch?.batchId === selectedWarningBatchId) {
+        return syncBatch;
+      }
+      return recentSyncBatches.find((batch) => batch.batchId === selectedWarningBatchId) ?? null;
+    }
+
+    if (syncBatch?.warnings.length) {
+      return syncBatch;
+    }
+
+    return lastResult?.sycamoreSync?.warnings.length ? lastResult.sycamoreSync : null;
+  }, [lastResult, recentSyncBatches, selectedWarningBatchId, syncBatch]);
+
   const actionWarnings = useMemo(() => {
-    const parserWarnings = lastResult?.uploadResults?.flatMap((result) => result.parserWarnings ?? []) ?? [];
-    const uploadErrors = lastResult?.uploadErrors ?? [];
     return [
-      ...parserWarnings,
-      ...(lastResult?.parserWarnings ?? []),
       ...(lastResult?.sourceWarnings ?? []),
-      ...(lastResult?.sycamoreSync?.warnings ?? []),
-      ...uploadErrors
+      ...(selectedWarningBatch?.warnings ?? []),
     ];
-  }, [lastResult]);
+  }, [lastResult, selectedWarningBatch]);
 
   const parsedSyncStudentNames = useMemo(() => parseStudentNamesInput(syncStudentNamesText), [syncStudentNamesText]);
   const hasTargetedSyncFilters = parsedSyncStudentNames.length > 0 || Boolean(syncGrade);
@@ -723,8 +882,8 @@ export function IngestionClient() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Sources"
-        title="Manage synced records and fallback imports"
-        description="Run the primary Sycamore sync for normal intake, then use PDF import only when data is missing from Sycamore or you need historical backfill."
+        title="Manage Sycamore syncs"
+        description="Run the Sycamore sync pipeline, monitor background jobs, and keep the discipline dataset current."
         actions={
           <Button
             type="button"
@@ -746,10 +905,7 @@ export function IngestionClient() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-3">
-                <StatusBadge tone="success">Sycamore</StatusBadge>
-                <StatusBadge tone={showFallbackTools ? "warning" : "neutral"}>
-                  Fallback {showFallbackTools ? "visible" : "hidden"}
-                </StatusBadge>
+                <StatusBadge tone="success">Sycamore primary</StatusBadge>
               </div>
               <div className="space-y-1">
                 <h2 className="font-display text-2xl text-[var(--color-ink)]">Sycamore intake</h2>
@@ -759,23 +915,10 @@ export function IngestionClient() {
               </div>
             </div>
 
-            <label
-              htmlFor="show-fallback-tools"
-              className="flex items-start gap-3 rounded-[1rem] border border-[var(--color-line)] bg-white/80 px-4 py-3"
-            >
-              <Checkbox
-                id="show-fallback-tools"
-                checked={showFallbackTools}
-                onChange={(event) => setShowFallbackTools(event.currentTarget.checked)}
-                className="mt-0.5"
-              />
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-[var(--color-ink)]">Show fallback PDF intake</p>
-                <p className="text-xs leading-5 text-[var(--color-muted)]">
-                  Keep manual upload hidden unless Sycamore is missing records.
-                </p>
-              </div>
-            </label>
+            <div className="rounded-[1rem] border border-[var(--color-line)] bg-white/80 px-4 py-3 text-sm leading-6 text-[var(--color-muted)]">
+              PDF upload and parser-driven intake have been retired. All active discipline intake now runs through
+              Sycamore sync.
+            </div>
           </div>
 
           <form onSubmit={onSyncSubmit} className="space-y-5">
@@ -951,6 +1094,13 @@ export function IngestionClient() {
                         ? `${syncBatch.warningsCount} warning${syncBatch.warningsCount === 1 ? "" : "s"} across completed chunks`
                         : "No warnings across completed chunks"}
                     </p>
+                    {syncBatch.warningsCount > 0 ? (
+                      <div className="mt-3">
+                        <Button type="button" variant="ghost" size="sm" onClick={() => showBatchWarnings(syncBatch)}>
+                          View warnings
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -1128,7 +1278,16 @@ export function IngestionClient() {
                           {batch.completedChunks} / {batch.totalChunks}
                         </td>
                         <td className={tableCellClassName}>{batch.recordsUpserted}</td>
-                        <td className={tableCellClassName}>{batch.warningsCount}</td>
+                        <td className={tableCellClassName}>
+                          <div className="flex items-center gap-3">
+                            <span>{batch.warningsCount}</span>
+                            {batch.warningsCount > 0 ? (
+                              <Button type="button" variant="ghost" size="sm" onClick={() => showBatchWarnings(batch)}>
+                                View
+                              </Button>
+                            ) : null}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1235,25 +1394,48 @@ export function IngestionClient() {
       ) : null}
 
       {actionWarnings.length > 0 ? (
-        <Panel className="space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="rounded-2xl bg-[#fff7e8] p-3 text-[var(--color-warning)]">
-              <AlertTriangle className="h-5 w-5" />
+        <Panel ref={warningsPanelRef} className="space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="rounded-2xl bg-[#fff7e8] p-3 text-[var(--color-warning)]">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="font-display text-2xl text-[var(--color-ink)]">Sync warnings</h2>
+                <p className="text-sm text-[var(--color-muted)]">
+                  {selectedWarningBatch
+                    ? `Showing ${selectedWarningBatch.warningsCount} warning${selectedWarningBatch.warningsCount === 1 ? "" : "s"} for ${formatSyncWindow(selectedWarningBatch.overallWindow)}.`
+                    : "Use these to understand what still needs follow-up after the latest Sycamore sync."}
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="font-display text-2xl text-[var(--color-ink)]">Intake warnings</h2>
-              <p className="text-sm text-[var(--color-muted)]">Use these to understand what still needs follow-up or manual confirmation.</p>
-            </div>
+            {selectedWarningBatchId ? (
+              <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedWarningBatchId(null)}>
+                Show current warnings
+              </Button>
+            ) : null}
           </div>
           <div className="grid gap-3">
-            {actionWarnings.map((warning) => (
-              <div
-                key={warning}
-                className="rounded-[1.25rem] border border-[#ead7aa] bg-[#fdf7e6] px-4 py-3 text-sm leading-6 text-[var(--color-warning)]"
-              >
-                {warning}
-              </div>
-            ))}
+            {actionWarnings.map((warning, index) => {
+              const warningDetail = formatSycamoreWarningDetail(warning);
+              return (
+                <div
+                  key={`${warning}-${index}`}
+                  className="rounded-[1.25rem] border border-[#ead7aa] bg-[#fdf7e6] px-4 py-3 text-sm leading-6 text-[var(--color-warning)]"
+                >
+                  <p className="font-semibold text-[var(--color-ink)]">{warningDetail.title}</p>
+                  {warningDetail.description ? (
+                    <p className="mt-1 text-sm text-[var(--color-muted)]">{warningDetail.description}</p>
+                  ) : null}
+                  {warningDetail.reference ? (
+                    <p className="mt-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-subtle)]">
+                      Refers to: {warningDetail.reference}
+                    </p>
+                  ) : null}
+                  <p className="mt-2 break-all font-mono text-xs text-[var(--color-warning)]">{warning}</p>
+                </div>
+              );
+            })}
           </div>
         </Panel>
       ) : null}

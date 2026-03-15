@@ -341,7 +341,7 @@ function normalizeFilterValue(value: string | undefined): string {
 }
 
 function normalizeSourceType(value: string | undefined): IngestionSourceType {
-  return value === "manual_pdf" ? value : DEFAULT_SOURCE_TYPE;
+  return DEFAULT_SOURCE_TYPE;
 }
 
 function parseBoundary(value: string | undefined, boundary: "start" | "end"): number {

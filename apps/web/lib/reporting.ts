@@ -71,7 +71,7 @@ function normalizeFilterValue(value: string | undefined): string {
 }
 
 function normalizeSourceType(value: string | undefined): IngestionSourceType {
-  return value === "manual_pdf" ? value : DEFAULT_SOURCE_TYPE;
+  return DEFAULT_SOURCE_TYPE;
 }
 
 function parseBoundary(value: string | undefined, boundary: "start" | "end"): number {
@@ -378,9 +378,7 @@ export async function buildReportSnapshot(
   const topGrade = incidentsByGrade[0];
   const topReason = topReasons[0];
   const narrativeParts = [
-    normalizedFilters.sourceType === "manual_pdf"
-      ? "This view is in PDF exception mode and excludes the Sycamore primary dataset."
-      : "This view is scoped to Sycamore source-of-truth events by default.",
+    "This view is scoped to Sycamore-synced source-of-truth events.",
     topGrade
       ? `Grade ${topGrade.grade} carries the heaviest load with ${topGrade.incidentCount} incidents and ${topGrade.totalPoints} points.`
       : "No discipline events fall inside the current reporting window.",
