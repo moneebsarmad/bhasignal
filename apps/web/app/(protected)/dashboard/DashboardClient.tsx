@@ -23,7 +23,6 @@ import {
   tableShellClassName
 } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { DeepAnalytics } from "@/components/deep-analytics";
 
 interface DashboardPayload {
   filters: {
@@ -138,8 +137,6 @@ interface SycamoreSyncActionResponse {
   alreadyQueued?: boolean;
   error?: string;
 }
-
-type DashboardTab = "command" | "analytics";
 
 const DEFAULT_SOURCE_TYPE = "sycamore_api";
 
@@ -280,7 +277,6 @@ function statusRows(record: Record<string, number>) {
 }
 
 export function DashboardClient({ canManageSycamore }: { canManageSycamore: boolean }) {
-  const [activeTab, setActiveTab] = useState<DashboardTab>("command");
   const [grade, setGrade] = useState("");
   const [sourceType, setSourceType] = useState(DEFAULT_SOURCE_TYPE);
   const [data, setData] = useState<DashboardPayload | null>(null);
@@ -410,45 +406,7 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
         }
       />
 
-      <div className="flex flex-wrap gap-2 rounded-[1.4rem] border border-[var(--color-line)] bg-[var(--color-soft-surface)] p-2">
-        {[
-          { key: "command" as const, label: "Command Center" },
-          { key: "analytics" as const, label: "Deep Analytics" }
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            type="button"
-            className={cn(
-              "rounded-full px-4 py-2 text-sm font-semibold transition",
-              activeTab === tab.key
-                ? "bg-[var(--color-primary)] text-white shadow-card"
-                : "text-[var(--color-muted)] hover:bg-white hover:text-[var(--color-ink)]"
-            )}
-            onClick={() => setActiveTab(tab.key)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === "analytics" ? <DeepAnalytics embedded /> : null}
-
-      {activeTab === "command" ? (
-        <>
-          <Panel className="space-y-5">
-            <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
-                  Live posture filters
-                </p>
-                <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">Scope the command center</h2>
-              </div>
-              <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
-                This view uses stored cumulative demerit totals for the selected source mode. It is intentionally
-                operational, not date-windowed, so the parent communication ladder stays accurate.
-              </p>
-            </div>
-
+      <Panel className="space-y-5">
             <form onSubmit={onApplyFilters} className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_auto]">
               <Field label="Grade" hint="Leave blank for all grades.">
                 <Input value={grade} onChange={(event) => setGrade(event.currentTarget.value)} placeholder="e.g. 8" />
@@ -465,22 +423,22 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                 </Button>
               </div>
             </form>
-          </Panel>
+      </Panel>
 
-          {error ? (
-            <InlineAlert tone="danger" title="Dashboard metrics could not be loaded.">
-              {error}
-            </InlineAlert>
-          ) : null}
+      {error ? (
+        <InlineAlert tone="danger" title="Dashboard metrics could not be loaded.">
+          {error}
+        </InlineAlert>
+      ) : null}
 
-          {data?.filters.sourceType === "manual_pdf" ? (
-            <InlineAlert tone="warning" title="PDF exception mode is active.">
-              This command center is showing fallback import data instead of the Sycamore primary dataset.
-            </InlineAlert>
-          ) : null}
+      {data?.filters.sourceType === "manual_pdf" ? (
+        <InlineAlert tone="warning" title="PDF exception mode is active.">
+          This command center is showing fallback import data instead of the Sycamore primary dataset.
+        </InlineAlert>
+      ) : null}
 
-          {data ? (
-            <>
+      {data ? (
+        <>
               <section className="grid gap-5 md:grid-cols-2 xl:grid-cols-5">
                 <StatCard
                   label="Students tracked"
@@ -532,124 +490,58 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
 
               <section className="space-y-5">
                 <Panel className="space-y-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
-                        Handbook ladder
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="space-y-1">
+                      <h2 className="font-display text-2xl text-[var(--color-ink)]">Communication ladder</h2>
+                      <p className="text-sm leading-6 text-[var(--color-muted)]">
+                        Cumulative thresholds for the selected source mode.
                       </p>
-                      <h2 className="mt-2 font-display text-2xl text-[var(--color-ink)]">
-                        Demerit thresholds that trigger parent communication
-                      </h2>
                     </div>
-                    <StatusBadge tone="warning">{data.metrics.studentsAt10Plus} students currently escalated</StatusBadge>
+                    <div className="flex flex-wrap gap-2">
+                      <StatusBadge tone="warning">{data.metrics.studentsAt10Plus} at 10+</StatusBadge>
+                      <StatusBadge tone="info">{activeEscalationBands} active bands</StatusBadge>
+                      <StatusBadge tone="danger">{data.metrics.studentsAt35Plus} at 35+</StatusBadge>
+                    </div>
                   </div>
 
-                  <div className="grid gap-5 xl:grid-cols-[minmax(16rem,19rem)_minmax(0,1fr)]">
-                    <SoftPanel className="space-y-5 border-white/80 bg-[linear-gradient(145deg,rgba(17,94,89,0.10),rgba(255,255,255,0.97)_48%,rgba(173,124,44,0.08))]">
-                      <div className="space-y-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
-                          Operational view
-                        </p>
-                        <h3 className="font-display text-3xl text-[var(--color-ink)]">Escalation timeline</h3>
-                        <p className="text-sm leading-7 text-[var(--color-muted)]">
-                          This ladder stays cumulative for the selected source mode, so each threshold reflects the
-                          next family communication and follow-through step the team owes right now.
-                        </p>
-                      </div>
+                  <div className="grid gap-3">
+                    {data.bandCounts.map((band) => {
+                      const styles = handbookBandToneStyles(band.tone);
 
-                      <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-                        <div className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/85 p-4">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                            Students escalated
-                          </p>
-                          <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">
-                            {data.metrics.studentsAt10Plus}
-                          </p>
-                          <p className="mt-1 text-sm text-[var(--color-muted)]">Currently at 10 points or more.</p>
-                        </div>
-                        <div className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/85 p-4">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                            Bands populated
-                          </p>
-                          <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">{activeEscalationBands}</p>
-                          <p className="mt-1 text-sm text-[var(--color-muted)]">
-                            Thresholds with at least one student right now.
-                          </p>
-                        </div>
-                        <div className="rounded-[1.2rem] border border-[var(--color-line)] bg-white/85 p-4">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                            Critical tier
-                          </p>
-                          <p className="mt-2 font-display text-3xl text-[var(--color-ink)]">
-                            {data.metrics.studentsAt35Plus}
-                          </p>
-                          <p className="mt-1 text-sm text-[var(--color-muted)]">Students already at 35 points or above.</p>
-                        </div>
-                      </div>
-                    </SoftPanel>
-
-                    <div className="relative ml-3 border-l border-[var(--color-line-strong)] pl-7 md:pl-9">
-                      <div className="space-y-4">
-                        {data.bandCounts.map((band) => {
-                          const styles = handbookBandToneStyles(band.tone);
-
-                          return (
-                            <article
-                              key={band.id}
-                              className={cn(
-                                "relative overflow-hidden rounded-[1.6rem] border p-5 transition",
-                                styles.card,
-                                band.count === 0 ? "opacity-75" : "shadow-card"
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  "absolute -left-[2.18rem] top-7 h-4 w-4 rounded-full border-4 border-white shadow-sm",
-                                  styles.dot
-                                )}
-                              />
-                              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                <div className="space-y-1">
-                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                                    Threshold
-                                  </p>
-                                  <h3 className="font-display text-3xl text-[var(--color-ink)]">{band.shortLabel}</h3>
-                                  <p className="text-sm leading-6 text-[var(--color-muted)]">{band.label}</p>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <StatusBadge tone={band.tone}>{band.label}</StatusBadge>
-                                  <span
-                                    className={cn(
-                                      "rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em]",
-                                      styles.chip
-                                    )}
-                                  >
-                                    {band.count} student{band.count === 1 ? "" : "s"}
-                                  </span>
-                                </div>
+                      return (
+                        <article
+                          key={band.id}
+                          className={cn(
+                            "rounded-[1.25rem] border px-4 py-4",
+                            styles.card,
+                            band.count === 0 ? "opacity-75" : ""
+                          )}
+                        >
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className={cn("h-2.5 w-2.5 rounded-full", styles.dot)} />
+                                <p className="font-semibold text-[var(--color-ink)]">{band.label}</p>
                               </div>
+                              <p className="text-sm text-[var(--color-muted)]">
+                                {band.count} student{band.count === 1 ? "" : "s"}
+                              </p>
+                            </div>
+                            <StatusBadge tone={band.tone}>{band.shortLabel}</StatusBadge>
+                          </div>
 
-                              <div className="mt-5 grid gap-3 md:grid-cols-2">
-                                <div className="rounded-[1.15rem] border border-white/80 bg-white/88 p-4">
-                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                                    Parent communication
-                                  </p>
-                                  <p className="mt-2 text-sm font-semibold leading-7 text-[var(--color-ink)]">
-                                    {band.parentCommunication}
-                                  </p>
-                                </div>
-                                <div className="rounded-[1.15rem] border border-white/80 bg-white/72 p-4">
-                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
-                                    Admin follow-through
-                                  </p>
-                                  <p className="mt-2 text-sm leading-7 text-[var(--color-ink)]">{band.adminAction}</p>
-                                </div>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    </div>
+                          <div className="mt-3 grid gap-2 text-sm leading-6 text-[var(--color-muted)] lg:grid-cols-2">
+                            <p>
+                              <span className="font-semibold text-[var(--color-ink)]">Parent:</span>{" "}
+                              {band.parentCommunication}
+                            </p>
+                            <p>
+                              <span className="font-semibold text-[var(--color-ink)]">Admin:</span> {band.adminAction}
+                            </p>
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
                 </Panel>
 
@@ -894,114 +786,100 @@ export function DashboardClient({ canManageSycamore }: { canManageSycamore: bool
                 </Panel>
               </section>
 
-              <Panel className="space-y-5 overflow-hidden border-white/80 bg-[linear-gradient(135deg,rgba(17,94,89,0.10),rgba(255,255,255,0.98)_44%,rgba(173,124,44,0.08))]">
-                <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="max-w-3xl space-y-4">
-                    <div className="flex flex-wrap items-center gap-3">
+              <Panel className="space-y-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
                       {sycamoreStatus ? <StatusBadge tone={sycamoreStatus.tone}>{sycamoreStatus.label}</StatusBadge> : null}
                       <StatusBadge tone={data.sycamore.configured ? "success" : "warning"}>
-                        {data.sycamore.configured ? "Primary source configured" : "Configuration required"}
+                        {data.sycamore.configured ? "Configured" : "Configuration required"}
                       </StatusBadge>
                     </div>
-
-                    <div className="space-y-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
-                        Source freshness
-                      </p>
-                      <h2 className="font-display text-3xl text-[var(--color-ink)] sm:text-[2.6rem]">
-                        Trust the data before acting on it
-                      </h2>
-                      <p className="max-w-2xl text-sm leading-7 text-[var(--color-muted)]">
+                    <div className="space-y-1">
+                      <h2 className="font-display text-2xl text-[var(--color-ink)]">Source freshness</h2>
+                      <p className="max-w-2xl text-sm leading-6 text-[var(--color-muted)]">
                         {sycamoreStatus?.description}
                       </p>
                     </div>
-
-                    <div className="flex flex-wrap gap-3">
-                      {canManageSycamore ? (
-                        <Button
-                          type="button"
-                          variant="primary"
-                          onClick={() => void onRunSycamoreSync()}
-                          disabled={isSyncingSycamore || !data.sycamore.configured}
-                        >
-                          <RefreshCcw className={cn("h-4 w-4", isSyncingSycamore ? "animate-spin" : "")} />
-                          {isSyncingSycamore ? "Syncing Sycamore..." : "Sync from Sycamore"}
-                        </Button>
-                      ) : null}
-                      <Link href="/ingestion" className={buttonStyles({ variant: "ghost" })}>
-                        Monitor sync jobs
-                      </Link>
-                      <Link href="/reports/reconciliation" className={buttonStyles({ variant: "secondary" })}>
-                        Open reconciliation
-                      </Link>
-                    </div>
-
-                    {sycamoreError ? (
-                      <InlineAlert tone="danger" title="Sycamore sync failed.">
-                        {sycamoreError}
-                      </InlineAlert>
-                    ) : null}
-
-                    {sycamoreNotice ? (
-                      <InlineAlert tone={sycamoreNoticeTone} title={sycamoreNoticeTitle}>
-                        {sycamoreNotice}
-                      </InlineAlert>
-                    ) : null}
-
-                    {data.sycamore.error ? (
-                      <InlineAlert tone="warning" title="Sycamore summary is unavailable.">
-                        {data.sycamore.error}
-                      </InlineAlert>
-                    ) : null}
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-3 xl:w-[21rem] xl:grid-cols-1">
-                    <SoftPanel className="space-y-3 border-white/70 bg-white/80">
-                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
-                        Mirrored rows
-                      </p>
-                      <p className="font-display text-4xl text-[var(--color-ink)]">{data.sycamore.totalLogs}</p>
-                      <p className="text-sm leading-7 text-[var(--color-muted)]">
-                        Read-only Sycamore rows currently stored for command-center decision making.
-                      </p>
-                    </SoftPanel>
-                    <SoftPanel className="space-y-3 border-white/70 bg-white/80">
-                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
-                        Latest run
-                      </p>
-                      <p className="font-display text-4xl text-[var(--color-ink)]">
-                        {data.sycamore.lastSync?.recordsUpserted ?? 0}
-                      </p>
-                      <p className="text-sm leading-7 text-[var(--color-muted)]">
-                        {data.sycamore.lastSync
-                          ? `${syncModeLabel(data.sycamore.lastSync.syncMode)} sync ${data.sycamore.lastSync.status}.`
-                          : "No Sycamore sync has run yet."}
-                      </p>
-                    </SoftPanel>
-                    <SoftPanel className="space-y-3 border-white/70 bg-white/80">
-                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--color-subtle)]">
-                        Linked rows
-                      </p>
-                      <p className="font-display text-4xl text-[var(--color-ink)]">{data.sycamore.linkedLogs}</p>
-                      <p className="text-sm leading-7 text-[var(--color-muted)]">
-                        Mirrored rows matched to local students through <code>external_id</code>.
-                      </p>
-                    </SoftPanel>
+                  <div className="flex flex-wrap gap-2">
+                    {canManageSycamore ? (
+                      <Button
+                        type="button"
+                        variant="primary"
+                        onClick={() => void onRunSycamoreSync()}
+                        disabled={isSyncingSycamore || !data.sycamore.configured}
+                      >
+                        <RefreshCcw className={cn("h-4 w-4", isSyncingSycamore ? "animate-spin" : "")} />
+                        {isSyncingSycamore ? "Syncing..." : "Sync"}
+                      </Button>
+                    ) : null}
+                    <Link href="/ingestion" className={buttonStyles({ variant: "ghost" })}>
+                      Jobs
+                    </Link>
+                    <Link href="/reports/reconciliation" className={buttonStyles({ variant: "secondary" })}>
+                      Reconcile
+                    </Link>
                   </div>
                 </div>
+
+                {sycamoreError ? (
+                  <InlineAlert tone="danger" title="Sycamore sync failed.">
+                    {sycamoreError}
+                  </InlineAlert>
+                ) : null}
+
+                {sycamoreNotice ? (
+                  <InlineAlert tone={sycamoreNoticeTone} title={sycamoreNoticeTitle}>
+                    {sycamoreNotice}
+                  </InlineAlert>
+                ) : null}
+
+                {data.sycamore.error ? (
+                  <InlineAlert tone="warning" title="Sycamore summary is unavailable.">
+                    {data.sycamore.error}
+                  </InlineAlert>
+                ) : null}
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <SoftPanel className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Mirrored rows
+                    </p>
+                    <p className="font-display text-3xl text-[var(--color-ink)]">{data.sycamore.totalLogs}</p>
+                  </SoftPanel>
+                  <SoftPanel className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Latest run
+                    </p>
+                    <p className="font-display text-3xl text-[var(--color-ink)]">
+                      {data.sycamore.lastSync?.recordsUpserted ?? 0}
+                    </p>
+                    <p className="text-sm text-[var(--color-muted)]">
+                      {data.sycamore.lastSync
+                        ? `${syncModeLabel(data.sycamore.lastSync.syncMode)} ${data.sycamore.lastSync.status}`
+                        : "No sync yet"}
+                    </p>
+                  </SoftPanel>
+                  <SoftPanel className="space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-subtle)]">
+                      Linked rows
+                    </p>
+                    <p className="font-display text-3xl text-[var(--color-ink)]">{data.sycamore.linkedLogs}</p>
+                  </SoftPanel>
+                </div>
               </Panel>
-            </>
-          ) : isLoading ? (
-            <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <div
-                  key={index}
-                  className="h-48 animate-pulse rounded-[1.75rem] border border-white/80 bg-white/80 shadow-card"
-                />
-              ))}
-            </div>
-          ) : null}
         </>
+      ) : isLoading ? (
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-48 animate-pulse rounded-[1.75rem] border border-white/80 bg-white/80 shadow-card"
+            />
+          ))}
+        </div>
       ) : null}
     </div>
   );
