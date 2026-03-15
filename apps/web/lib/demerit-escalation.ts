@@ -2,7 +2,6 @@ export type DemeritEscalationBandId =
   | "below_10"
   | "points_10_19"
   | "points_20_29"
-  | "points_30_34"
   | "points_35_39"
   | "points_40_plus";
 
@@ -51,10 +50,10 @@ export const demeritEscalationBands: DemeritEscalationBand[] = [
   },
   {
     id: "points_20_29",
-    label: "20 to 29 points",
-    shortLabel: "20-29",
+    label: "20 to 34 points",
+    shortLabel: "20-34",
     minPoints: 20,
-    maxPoints: 29,
+    maxPoints: 34,
     tone: "warning",
     priority: 2,
     parentCommunication: "Parents should meet with BHA administration.",
@@ -65,27 +64,13 @@ export const demeritEscalationBands: DemeritEscalationBand[] = [
       "Student should be advised to attend counseling with Behavior and/or Academic Counselors."
   },
   {
-    id: "points_30_34",
-    label: "30 to 34 points",
-    shortLabel: "30-34",
-    minPoints: 30,
-    maxPoints: 34,
-    tone: "warning",
-    priority: 3,
-    parentCommunication: "Send a certified letter and an email to the family.",
-    adminAction: "Send the formal certified letter and email to the family immediately.",
-    adminMessage:
-      "Issue the formal letter immediately and make sure the signed communication is archived in the student record.",
-    policyImpact: "The handbook expects a documented certified letter at 30 points."
-  },
-  {
     id: "points_35_39",
     label: "35 to 39 points",
     shortLabel: "35-39",
     minPoints: 35,
     maxPoints: 39,
     tone: "danger",
-    priority: 4,
+    priority: 3,
     parentCommunication: "Parents should meet with administration for a severity review.",
     adminAction: "Obtain signed acknowledgement, document the case in Sycamore, and prepare the 5-day OSS response.",
     adminMessage:
@@ -100,7 +85,7 @@ export const demeritEscalationBands: DemeritEscalationBand[] = [
     minPoints: 40,
     maxPoints: null,
     tone: "danger",
-    priority: 5,
+    priority: 4,
     parentCommunication: "Parents should be informed of unenrollment or expulsion review.",
     adminAction: "Escalate to formal unenrollment or expulsion recommendation workflow.",
     adminMessage:
